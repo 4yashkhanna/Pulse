@@ -40,7 +40,10 @@ def embed_texts(texts: list[str], *, task: str = "RETRIEVAL_DOCUMENT") -> list[l
         result = client.models.embed_content(
             model=settings.embed_model,
             contents=texts,
-            config=types.EmbedContentConfig(task_type=task),
+            config=types.EmbedContentConfig(
+                task_type=task,
+                output_dimensionality=settings.embed_dim,
+            ),
         )
         return [list(e.values) for e in result.embeddings]
     raise NotImplementedError(f"Embeddings for provider '{settings.llm_provider}' not wired yet.")

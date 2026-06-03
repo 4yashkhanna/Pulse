@@ -134,12 +134,17 @@ def seed_knowledge() -> None:
 
 
 def main() -> None:
-    apply_schema()
-    seed_knowledge()
-    ids = seed_users()
-    seed_baseline()
-    seed_interactions(ids)
-    print("\nDone. Start the backend (uvicorn app.main:app --reload) and the frontend.")
+    from app.db import get_pool
+
+    try:
+        apply_schema()
+        seed_knowledge()
+        ids = seed_users()
+        seed_baseline()
+        seed_interactions(ids)
+        print("\nDone. Start the backend (uvicorn app.main:app --reload) and the frontend.")
+    finally:
+        get_pool().close()
 
 
 if __name__ == "__main__":

@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # The 6 KPMG design-maturity pillars and their weights (sum = 1.0).
-# The weighted sum of pillar scores is the Design Quality (DQ) score.
 PILLAR_WEIGHTS: dict[str, float] = {
     "values": 0.25,
     "behavior": 0.20,
@@ -39,6 +38,10 @@ class Settings:
             os.getenv("SYNCHRONOUS_TAGGING", "true").lower() == "true"
         )
         self.frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+
+        # Auth
+        self.jwt_secret: str = os.getenv("JWT_SECRET", "dev-secret-change-me")
+        self.jwt_ttl_hours: int = int(os.getenv("JWT_TTL_HOURS", "24"))
 
         # Azure (production) — read but unused in the prototype.
         self.azure_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")

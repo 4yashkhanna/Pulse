@@ -6,11 +6,11 @@ export default function Page() {
   return (
     <Guard role={["employee", "manager"]}>
       <div className="page">
-        <div className="page-title">Pulse Coach</div>
-        <div className="page-sub">Coming in the next build step</div>
+        <div className="page-title">Performance</div>
+        <div className="page-sub">Coming after the chatbot</div>
         <div className="card muted">
-          The chatbot (conversation history, search, and the org-grounded coach) is the
-          next surface to be built.
+          Individual and team dashboards (permission-gated) are built once conversations
+          are flowing through the coach.
         </div>
       </div>
     </Guard>

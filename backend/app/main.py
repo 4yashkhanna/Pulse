@@ -1,17 +1,17 @@
-"""Pulse FastAPI application."""
+"""Pulse FastAPI application (multi-tenant)."""
 from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .coach import chat as coach_chat
+from .auth.routes import router as auth_router
 from .config import get_settings
-from .dashboard.routes import router as dashboard_router
-from .schemas import ChatRequest, ChatResponse, RetrievedChunk
+from .knowledge.routes import router as knowledge_router
+from .orgs.routes import router as orgs_router
 
 settings = get_settings()
 
-app = FastAPI(title="Pulse — Design Intelligence Coach", version="0.1.0")
+app = FastAPI(title="Pulse — Design Intelligence Platform", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,34 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(dashboard_router)
+app.include_router(auth_router)
+app.include_router(orgs_router)
+app.include_router(knowledge_router)
+# Chatbot + dashboard routers are added in the next build steps.
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "provider": settings.llm_provider}
-
-
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    result = coach_chat.run_turn(
-        message=req.message,
-        user_id=req.user_id,
-        sector=req.sector,
-        conversation_id=req.conversation_id,
-        history=[t.model_dump() for t in req.history],
-    )
-    return ChatResponse(
-        reply=result.reply,
-        conversation_id=result.conversation_id,
-        retrieved=[
-            RetrievedChunk(
-                framework=c.framework,
-                pillar=c.pillar,
-                phase=c.phase,
-                similarity=round(c.similarity, 3),
-            )
-            for c in result.chunks
-        ],
-        tag=result.tag,
-    )

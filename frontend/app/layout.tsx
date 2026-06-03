@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Nav from "@/components/Nav";
+import { AuthProvider } from "@/lib/auth";
 
 export const metadata: Metadata = {
-  title: "Pulse — Design Intelligence Coach",
+  title: "Pulse — Design Intelligence Platform",
   description: "KPMG Design Excellence & Quality",
 };
 
@@ -21,8 +22,10 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <Nav />
-        {children}
+        <AuthProvider>
+          <Nav />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

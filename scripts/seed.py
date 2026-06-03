@@ -1,148 +1,107 @@
-"""Seed Pulse for a demo:
+"""Seed Pulse for the multi-tenant prototype:
 
-1. (optionally) apply the schema
-2. ingest the KPMG knowledge markdown into pgvector
-3. create a mock cohort of users across departments
-4. seed a mocked assessment baseline
-5. generate synthetic interactions (spread over recent months, trending up) so the
-   team and leadership dashboards are populated on first load
+1. apply the schema
+2. create a KPMG admin account
+3. create one demo organization with a team, a manager, and two employees
 
-Run from the backend dir after installing requirements and setting backend/.env:
+Knowledge is NOT seeded here — a KPMG admin uploads it through the Admin Portal GUI.
 
-    cd backend && python ../scripts/seed.py
+Run from the backend dir:  cd backend && python ../scripts/seed.py
 """
 from __future__ import annotations
 
-import random
 import sys
 from pathlib import Path
 
-# Make `app` importable regardless of cwd.
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND))
 
-from app.config import DT_PHASES, PILLAR_WEIGHTS, USAGE_TYPES  # noqa: E402
-from app.db import get_conn  # noqa: E402
-from app.rag.ingest import ingest_paths  # noqa: E402
+from app.auth.security import hash_password  # noqa: E402
+from app.db import get_conn, get_pool  # noqa: E402
 
-PILLARS = list(PILLAR_WEIGHTS.keys())
-DATA_DIR = BACKEND / "data"
 SCHEMA = BACKEND.parent / "supabase" / "schema.sql"
+PW = "pulse1234"
 
-USERS = [
-    # (name, dept, role, sector)
-    ("Aanya Rao", "Product Design", "Senior Designer", "it"),
-    ("Marcus Bell", "Product Design", "Designer", "it"),
-    ("Priya Nair", "Product Design", "Design Lead", "it"),
-    ("Tom Fischer", "Innovation", "Innovation Manager", "fmcg"),
-    ("Lena Ortiz", "Innovation", "Strategist", "fmcg"),
-    ("Sam Whitfield", "Innovation", "Researcher", "fmcg"),
-    ("Ishaan Gupta", "Engineering UX", "UX Engineer", "it"),
-    ("Chloe Adams", "Engineering UX", "Frontend Lead", "it"),
-]
+KPMG_ADMIN = ("admin@kpmg.com", "Dana Kapoor (KPMG)")
+DEMO_ORG = {
+    "name": "Northwind Retail",
+    "maturity_stage": 2,
+    "maturity_label": "Designs for aesthetics",
+    "description": "Mid-size retailer. Strong visual brand, weak on evidence-backed "
+    "decisions. Target: move from designing for aesthetics to designing for strategy.",
+    "coach_prompt": "This organization is at Stage 2. Push them from aesthetic instinct "
+    "toward validating the problem and grounding decisions in real shopper behaviour. "
+    "Be encouraging but insist on evidence before commitment.",
+}
+MANAGER = ("maya@northwind.com", "Maya Lindqvist")
+EMPLOYEES = [("raj@northwind.com", "Raj Mehta"), ("ana@northwind.com", "Ana Duarte")]
 
 
 def apply_schema() -> None:
-    if not SCHEMA.exists():
-        return
-    sql = SCHEMA.read_text(encoding="utf-8")
     with get_conn() as conn:
-        conn.execute(sql)
+        conn.execute(SCHEMA.read_text(encoding="utf-8"))
         conn.commit()
     print(f"✓ schema applied from {SCHEMA.name}")
 
 
-def seed_users() -> list[str]:
-    ids: list[str] = []
+def reset() -> None:
     with get_conn() as conn:
-        conn.execute("DELETE FROM interactions")
-        conn.execute("DELETE FROM users")
-        for name, dept, role, sector in USERS:
-            row = conn.execute(
-                "INSERT INTO users (name, dept, role, sector) VALUES (%s,%s,%s,%s) RETURNING id",
-                (name, dept, role, sector),
-            ).fetchone()
-            ids.append(str(row["id"]))
+        # Cascades clear orgs → users/teams/knowledge/conversations/interactions.
+        conn.execute("DELETE FROM organizations")
+        conn.execute("DELETE FROM users WHERE org_id IS NULL")  # KPMG admins
         conn.commit()
-    print(f"✓ {len(ids)} users seeded")
-    return ids
 
 
-def seed_baseline() -> None:
-    # Mocked assessment baseline (0-100 per pillar) — the starting line.
-    baseline = {
-        "values": 48,
-        "behavior": 42,
-        "climate": 51,
-        "process": 39,
-        "resources": 45,
-        "success": 40,
-    }
+def seed() -> None:
     with get_conn() as conn:
-        conn.execute("DELETE FROM baseline")
-        for pillar, score in baseline.items():
+        # KPMG admin (no org).
+        conn.execute(
+            "INSERT INTO users (org_id, email, password_hash, name, role) "
+            "VALUES (NULL,%s,%s,%s,'kpmg_admin')",
+            (KPMG_ADMIN[0], hash_password(PW), KPMG_ADMIN[1]),
+        )
+        # Demo org.
+        org = conn.execute(
+            """
+            INSERT INTO organizations (name, maturity_stage, maturity_label, description, coach_prompt)
+            VALUES (%(name)s,%(maturity_stage)s,%(maturity_label)s,%(description)s,%(coach_prompt)s)
+            RETURNING id
+            """,
+            DEMO_ORG,
+        ).fetchone()
+        org_id = str(org["id"])
+        # Team.
+        team = conn.execute(
+            "INSERT INTO teams (org_id, name) VALUES (%s,'Product') RETURNING id", (org_id,)
+        ).fetchone()
+        team_id = str(team["id"])
+        # Manager.
+        mgr = conn.execute(
+            "INSERT INTO users (org_id, email, password_hash, name, role, team_id) "
+            "VALUES (%s,%s,%s,%s,'manager',%s) RETURNING id",
+            (org_id, MANAGER[0], hash_password(PW), MANAGER[1], team_id),
+        ).fetchone()
+        conn.execute("UPDATE teams SET manager_user_id = %s WHERE id = %s", (str(mgr["id"]), team_id))
+        # Employees.
+        for email, name in EMPLOYEES:
             conn.execute(
-                "INSERT INTO baseline (scope, pillar, score) VALUES ('org', %s, %s)",
-                (pillar, score),
+                "INSERT INTO users (org_id, email, password_hash, name, role, team_id) "
+                "VALUES (%s,%s,%s,%s,'employee',%s)",
+                (org_id, email, hash_password(PW), name, team_id),
             )
         conn.commit()
-    print("✓ baseline seeded")
-
-
-def seed_interactions(user_ids: list[str], n_per_user: int = 9) -> None:
-    """Create synthetic interactions spread over the last 5 months, trending upward
-    in quality so the leadership trajectory shows progress above baseline."""
-    random.seed(7)
-    rows = []
-    for uid in user_ids:
-        for _ in range(n_per_user):
-            months_ago = random.randint(0, 4)
-            # Quality drifts up as months_ago decreases (more recent = better).
-            base_q = 2.4 + (4 - months_ago) * 0.45
-            quality = max(1, min(5, round(random.gauss(base_q, 0.6))))
-            rows.append(
-                (
-                    uid,
-                    random.choice(PILLARS),
-                    random.choice(DT_PHASES),
-                    random.choice(USAGE_TYPES),
-                    quality >= 4 and random.random() < 0.7,  # evidence more likely when thoughtful
-                    quality,
-                    random.random() < 0.15,  # occasional handoff
-                    months_ago,
-                )
-            )
-    with get_conn() as conn:
-        for uid, pillar, phase, usage, evidence, quality, handoff, months_ago in rows:
-            conn.execute(
-                """
-                INSERT INTO interactions
-                    (user_id, pillar, phase, usage_type, evidence_backed, quality_score,
-                     handoff, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days'))
-                """,
-                (uid, pillar, phase, usage, evidence, quality, handoff, months_ago),
-            )
-        conn.commit()
-    print(f"✓ {len(rows)} synthetic interactions seeded")
-
-
-def seed_knowledge() -> None:
-    paths = sorted(DATA_DIR.glob("*.md"))
-    count = ingest_paths(paths)
-    print(f"✓ {count} knowledge chunks ingested from {len(paths)} files")
+    print("✓ KPMG admin + demo org seeded")
 
 
 def main() -> None:
-    from app.db import get_pool
-
     try:
         apply_schema()
-        seed_knowledge()
-        ids = seed_users()
-        seed_baseline()
-        seed_interactions(ids)
-        print("\nDone. Start the backend (uvicorn app.main:app --reload) and the frontend.")
+        reset()
+        seed()
+        print("\nAccounts (password for all: pulse1234)")
+        print(f"  KPMG admin : {KPMG_ADMIN[0]}")
+        print(f"  Manager    : {MANAGER[0]}")
+        print(f"  Employees  : {', '.join(e[0] for e in EMPLOYEES)}")
     finally:
         get_pool().close()
 

@@ -1,0 +1,361 @@
+/* KPMG design tokens (from the strategy document) */
+:root {
+  --blue: #00338d;
+  --blue-mid: #005eb8;
+  --blue-pale: #eaf0fa;
+  --teal: #00b2a9;
+  --teal-pale: #e0f6f5;
+  --amber: #e8a400;
+  --amber-pale: #fef5dc;
+  --purple: #483698;
+  --purple-pale: #efedf9;
+  --coral: #bc204b;
+  --coral-pale: #faecf1;
+  --green: #3b6d11;
+  --green-pale: #ebf4e0;
+  --ink: #080e1e;
+  --ink-2: #2e3650;
+  --ink-3: #5c6378;
+  --surface: #f7f7f5;
+  --white: #ffffff;
+  --border: rgba(0, 51, 141, 0.09);
+  --border-mid: rgba(0, 51, 141, 0.16);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Top navigation */
+.nav {
+  background: var(--blue);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 14px 32px;
+}
+.nav-brand {
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.nav-brand em {
+  color: var(--teal);
+  font-style: normal;
+}
+.nav-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 0;
+}
+.nav-link:hover,
+.nav-link.active {
+  color: #fff;
+}
+.nav-spacer {
+  flex: 1;
+}
+.nav-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.page-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--blue);
+  letter-spacing: -0.02em;
+}
+.page-sub {
+  color: var(--teal);
+  font-weight: 500;
+  margin-top: 2px;
+  margin-bottom: 24px;
+}
+
+/* Cards */
+.card {
+  background: var(--white);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+}
+.card-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 10px;
+}
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.grid-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* Chat */
+.chat-shell {
+  display: flex;
+  gap: 20px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 32px;
+  height: calc(100vh - 52px);
+}
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--white);
+  border: 0.5px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.chat-side {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.bubble {
+  max-width: 78%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.bubble.user {
+  align-self: flex-end;
+  background: var(--blue);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.bubble.coach {
+  align-self: flex-start;
+  background: var(--blue-pale);
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
+}
+.bubble.handoff {
+  background: var(--amber-pale);
+  border: 0.5px solid rgba(232, 164, 0, 0.4);
+}
+.chat-input-row {
+  display: flex;
+  gap: 10px;
+  padding: 16px;
+  border-top: 0.5px solid var(--border);
+}
+.chat-input {
+  flex: 1;
+  border: 0.5px solid var(--border-mid);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+}
+.chat-input:focus {
+  outline: none;
+  border-color: var(--blue-mid);
+}
+.btn {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0 20px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Chips & tags */
+.chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--teal-pale);
+  color: #0f6e56;
+}
+.chip.phase {
+  background: var(--blue-pale);
+  color: var(--blue);
+}
+.chip.handoff {
+  background: var(--amber-pale);
+  color: #6b4a00;
+}
+
+.knowledge-item {
+  font-size: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  margin-bottom: 8px;
+}
+.knowledge-item .kf {
+  font-weight: 700;
+  color: var(--blue);
+}
+.knowledge-item .ks {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+/* Metrics */
+.metric-big {
+  font-size: 44px;
+  font-weight: 800;
+  color: var(--blue);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.metric-delta {
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+.metric-delta.up {
+  color: var(--green);
+}
+.metric-delta.down {
+  color: var(--coral);
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.bar-label {
+  width: 90px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-transform: capitalize;
+}
+.bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--surface);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--teal);
+  border-radius: 5px;
+}
+.bar-val {
+  width: 42px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* Heatmap */
+.heat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.heat-table th {
+  text-align: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  padding: 8px 6px;
+  font-weight: 600;
+}
+.heat-table th:first-child,
+.heat-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.heat-cell {
+  text-align: center;
+  padding: 8px 6px;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.muted {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.flag {
+  display: inline-block;
+  background: var(--coral-pale);
+  color: var(--coral);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 6px 6px 0;
+}
+.select {
+  border: 0.5px solid var(--border-mid);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--white);
+}

@@ -1,10 +1,4 @@
-"""Passive tagging — the AI job that turns a conversation turn into dashboard data.
-
-Classifies each user turn against the 6 pillars, the DT phase, usage type, whether
-the decision was evidence-backed, a quality (sophistication) score, and whether a human
-handoff was warranted. Writes one row to `interactions`. In production this runs batched
-on a timer; in the prototype it runs synchronously so the DQ score moves live.
-"""
+"""Passive tagging — turns a conversation turn into dashboard data (org-scoped)."""
 from __future__ import annotations
 
 from ..config import DT_PHASES, PILLAR_WEIGHTS, USAGE_TYPES
@@ -44,8 +38,7 @@ TAG_SCHEMA = {
 
 def classify(user_message: str, coach_reply: str) -> dict:
     content = f"USER TURN:\n{user_message}\n\nCOACH REPLY:\n{coach_reply}"
-    raw = generate_json(TAG_SYSTEM, content, TAG_SCHEMA)
-    return _sanitize(raw)
+    return _sanitize(generate_json(TAG_SYSTEM, content, TAG_SCHEMA))
 
 
 def _sanitize(raw: dict) -> dict:
@@ -69,9 +62,10 @@ def _sanitize(raw: dict) -> dict:
 
 def tag_and_store(
     *,
+    org_id: str,
+    user_id: str,
     conversation_id: str,
     message_id: str,
-    user_id: str,
     user_message: str,
     coach_reply: str,
 ) -> dict:
@@ -80,14 +74,15 @@ def tag_and_store(
         conn.execute(
             """
             INSERT INTO interactions
-                (conversation_id, message_id, user_id, pillar, phase, usage_type,
+                (org_id, user_id, conversation_id, message_id, pillar, phase, usage_type,
                  evidence_backed, quality_score, handoff)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
+                org_id,
+                user_id,
                 conversation_id,
                 message_id,
-                user_id,
                 tag["pillar"],
                 tag["phase"],
                 tag["usage_type"],

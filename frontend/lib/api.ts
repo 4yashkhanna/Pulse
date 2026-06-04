@@ -116,4 +116,41 @@ export async function uploadDocs(orgId: string, files: FileList) {
   });
 }
 
+// --- coach / chatbot (org users) ---
+export interface ChatReply {
+  reply: string;
+  conversation_id: string;
+  title: string;
+  retrieved: { source: string | null; similarity: number }[];
+  tag: {
+    pillar: string;
+    phase: string;
+    usage_type: string;
+    evidence_backed: boolean;
+    quality_score: number;
+    handoff: boolean;
+  } | null;
+}
+export interface Conversation {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+export const sendMessage = (message: string, conversation_id?: string | null) =>
+  req<ChatReply>("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, conversation_id: conversation_id ?? null }),
+  });
+export const listConversations = (q?: string) =>
+  req<Conversation[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+export const getConversation = (id: string) =>
+  req<{ id: string; messages: { role: string; content: string }[] }>(`/conversations/${id}`);
+export const deleteConversation = (id: string) =>
+  req<any>(`/conversations/${id}`, { method: "DELETE" });
+
+// --- dashboards (org users) ---
+export const dashMe = () => req<any>("/dashboard/me");
+export const dashTeam = () => req<any>("/dashboard/team");
+export const dashMember = (id: string) => req<any>(`/dashboard/member/${id}`);
+
 export { API_BASE };

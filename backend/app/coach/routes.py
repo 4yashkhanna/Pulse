@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ..auth.security import CurrentUser, get_current_user
 from ..db import get_conn
+from ..llm import RateLimited
 from . import chat as coach_chat
 
 router = APIRouter(tags=["coach"])
@@ -36,12 +37,18 @@ def chat(req: ChatRequest, user: CurrentUser = Depends(require_org_user)):
         with get_conn() as conn:
             if not _owns(conn, req.conversation_id, user.id):
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
-    result = coach_chat.run_turn(
-        message=req.message,
-        org_id=user.org_id,  # type: ignore[arg-type]
-        user_id=user.id,
-        conversation_id=req.conversation_id,
-    )
+    try:
+        result = coach_chat.run_turn(
+            message=req.message,
+            org_id=user.org_id,  # type: ignore[arg-type]
+            user_id=user.id,
+            conversation_id=req.conversation_id,
+        )
+    except RateLimited:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "The coach is rate-limited on the free Gemini tier. Wait a few seconds and try again.",
+        )
     return {
         "reply": result.reply,
         "conversation_id": result.conversation_id,

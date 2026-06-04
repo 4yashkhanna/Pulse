@@ -8,10 +8,36 @@ calls these three functions and is provider-agnostic.
 from __future__ import annotations
 
 import json
+import time
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from .config import get_settings
+
+T = TypeVar("T")
+
+
+class RateLimited(Exception):
+    """Raised when the provider rate-limits us after retries are exhausted."""
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    s = str(exc)
+    return "429" in s or "RESOURCE_EXHAUSTED" in s or "exhausted" in s.lower()
+
+
+def _with_retry(fn: Callable[[], T], *, attempts: int = 3, base_delay: float = 2.0) -> T:
+    """Retry on rate-limit (429) with exponential backoff; re-raise other errors."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            if _is_rate_limit(exc):
+                if i == attempts - 1:
+                    raise RateLimited(str(exc)) from exc
+                time.sleep(base_delay * (2**i))
+                continue
+            raise
 
 
 @lru_cache
@@ -37,13 +63,15 @@ def embed_texts(texts: list[str], *, task: str = "RETRIEVAL_DOCUMENT") -> list[l
         from google.genai import types
 
         client = _gemini_client()
-        result = client.models.embed_content(
-            model=settings.embed_model,
-            contents=texts,
-            config=types.EmbedContentConfig(
-                task_type=task,
-                output_dimensionality=settings.embed_dim,
-            ),
+        result = _with_retry(
+            lambda: client.models.embed_content(
+                model=settings.embed_model,
+                contents=texts,
+                config=types.EmbedContentConfig(
+                    task_type=task,
+                    output_dimensionality=settings.embed_dim,
+                ),
+            )
         )
         return [list(e.values) for e in result.embeddings]
     raise NotImplementedError(f"Embeddings for provider '{settings.llm_provider}' not wired yet.")
@@ -56,13 +84,15 @@ def generate(system_prompt: str, user_content: str, *, temperature: float = 0.6)
         from google.genai import types
 
         client = _gemini_client()
-        resp = client.models.generate_content(
-            model=settings.chat_model,
-            contents=user_content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=temperature,
-            ),
+        resp = _with_retry(
+            lambda: client.models.generate_content(
+                model=settings.chat_model,
+                contents=user_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=temperature,
+                ),
+            )
         )
         return (resp.text or "").strip()
     raise NotImplementedError(f"Generation for provider '{settings.llm_provider}' not wired yet.")
@@ -78,15 +108,17 @@ def generate_json(system_prompt: str, user_content: str, schema: dict[str, Any])
         from google.genai import types
 
         client = _gemini_client()
-        resp = client.models.generate_content(
-            model=settings.tag_model,
-            contents=user_content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.0,
-                response_mime_type="application/json",
-                response_schema=schema,
-            ),
+        resp = _with_retry(
+            lambda: client.models.generate_content(
+                model=settings.tag_model,
+                contents=user_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                ),
+            )
         )
         try:
             return json.loads(resp.text or "{}")

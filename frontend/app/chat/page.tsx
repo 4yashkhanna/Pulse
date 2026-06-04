@@ -70,11 +70,12 @@ function Chat() {
         { role: "assistant", content: r.reply, handoff: r.tag?.handoff },
       ]);
       loadConvos(search || undefined);
-    } catch {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: "⚠️ Could not reach the coach. Is the backend running?" },
-      ]);
+    } catch (e: any) {
+      const msg =
+        typeof e?.message === "string" && e.message.length < 200
+          ? e.message
+          : "Could not reach the coach. Is the backend running?";
+      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${msg}` }]);
     } finally {
       setLoading(false);
     }

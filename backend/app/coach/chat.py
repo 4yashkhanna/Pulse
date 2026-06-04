@@ -96,17 +96,21 @@ def run_turn(
         conn.commit()
         user_msg_id = str(user_msg["id"])
 
-    # Passive tagging (synchronous in demo mode).
+    # Passive tagging (synchronous in demo mode). Never let a tagging failure
+    # (e.g. a rate limit) break the user's reply — the message is already saved.
     tag = None
     if settings.synchronous_tagging:
-        tag = tagging.tag_and_store(
-            org_id=org_id,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            message_id=user_msg_id,
-            user_message=message,
-            coach_reply=reply,
-        )
+        try:
+            tag = tagging.tag_and_store(
+                org_id=org_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                message_id=user_msg_id,
+                user_message=message,
+                coach_reply=reply,
+            )
+        except Exception:  # noqa: BLE001
+            tag = None
 
     return CoachResult(
         reply=reply, conversation_id=conversation_id, title=title, chunks=chunks, tag=tag

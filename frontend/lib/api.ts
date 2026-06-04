@@ -134,6 +134,7 @@ export interface ChatReply {
       pillar: string;
       polarity: number;
       text: string;
+      evidence?: string;
     }[];
   } | null;
 }
@@ -142,11 +143,17 @@ export interface Conversation {
   title: string;
   updated_at: string;
 }
-export const sendMessage = (message: string, conversation_id?: string | null) =>
-  req<ChatReply>("/chat", {
-    method: "POST",
-    body: JSON.stringify({ message, conversation_id: conversation_id ?? null }),
-  });
+export const sendMessage = (
+  message: string,
+  conversation_id?: string | null,
+  files?: File[],
+) => {
+  const fd = new FormData();
+  fd.append("message", message);
+  if (conversation_id) fd.append("conversation_id", conversation_id);
+  (files || []).forEach((f) => fd.append("files", f));
+  return req<ChatReply>("/chat", { method: "POST", body: fd });
+};
 export const listConversations = (q?: string) =>
   req<Conversation[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getConversation = (id: string) =>

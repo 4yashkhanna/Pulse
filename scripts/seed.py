@@ -53,18 +53,9 @@ def reset() -> None:
         conn.commit()
 
 
-from app.coach.signals import SIGNALS  # noqa: E402
-
-PILLARS = ["values", "behavior", "climate", "process", "resources", "success"]
-PHASES = ["empathy", "define", "ideate", "prototype", "test"]
-USAGE = ["ideation", "poc-scoping", "evidence-check", "synthesis", "reframing"]
-POS = {p: [s for s in SIGNALS if s.pillar == p and s.polarity > 0] for p in PILLARS}
-NEG = {p: [s for s in SIGNALS if s.pillar == p and s.polarity < 0] for p in PILLARS}
-
-
-def seed_dashboard_data(org_id: str, user_ids: list[str]) -> None:
-    """Mocked assessment baseline + synthetic interactions WITH fired signals, so the
-    signal-based dashboards are populated before anyone has chatted. Real usage adds live."""
+def seed_baseline(org_id: str) -> None:
+    """Seed ONLY the assessment baseline (the starting line from the maturity assessment).
+    No synthetic conversations — dashboard scores come exclusively from real coach usage."""
     with get_conn() as conn:
         baseline = {"values": 46, "behavior": 40, "climate": 50, "process": 38, "resources": 44, "success": 39}
         for pillar, score in baseline.items():
@@ -72,46 +63,8 @@ def seed_dashboard_data(org_id: str, user_ids: list[str]) -> None:
                 "INSERT INTO baseline (org_id, scope, pillar, score) VALUES (%s,'org',%s,%s)",
                 (org_id, pillar, score),
             )
-        random.seed(11)
-        n_int = n_sig = 0
-        for uid in user_ids:
-            for _ in range(16):
-                months_ago = random.randint(0, 4)
-                base_q = 2.3 + (4 - months_ago) * 0.5
-                quality = max(1, min(5, round(random.gauss(base_q, 0.6))))
-                pillar = random.choice(PILLARS)
-                row = conn.execute(
-                    """
-                    INSERT INTO interactions
-                        (org_id, user_id, pillar, phase, usage_type, evidence_backed,
-                         quality_score, handoff, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days')) RETURNING id
-                    """,
-                    (
-                        org_id, uid, pillar, random.choice(PHASES), random.choice(USAGE),
-                        quality >= 4 and random.random() < 0.7,
-                        quality, random.random() < 0.15, months_ago,
-                    ),
-                ).fetchone()
-                n_int += 1
-                p_pos = 0.30 + (quality - 1) / 4 * 0.50
-                for _ in range(random.randint(2, 3)):
-                    use_pos = random.random() < p_pos
-                    pool = POS[pillar] if use_pos and POS[pillar] else (NEG[pillar] or POS[pillar])
-                    if not pool:
-                        continue
-                    sig = random.choice(pool)
-                    conn.execute(
-                        """
-                        INSERT INTO interaction_signals
-                            (interaction_id, org_id, user_id, signal_id, pillar, polarity, created_at)
-                        VALUES (%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days'))
-                        """,
-                        (str(row["id"]), org_id, uid, sig.id, sig.pillar, sig.polarity, months_ago),
-                    )
-                    n_sig += 1
         conn.commit()
-    print(f"✓ baseline + {n_int} interactions + {n_sig} fired signals seeded")
+    print("✓ assessment baseline seeded (no synthetic activity — scores come from real chats)")
 
 
 def seed() -> tuple[str, list[str]]:
@@ -164,7 +117,7 @@ def main() -> None:
         apply_schema()
         reset()
         org_id, org_user_ids = seed()
-        seed_dashboard_data(org_id, org_user_ids)
+        seed_baseline(org_id)
         print("\nAccounts (password for all: pulse1234)")
         print(f"  KPMG admin : {KPMG_ADMIN[0]}")
         print(f"  Manager    : {MANAGER[0]}")

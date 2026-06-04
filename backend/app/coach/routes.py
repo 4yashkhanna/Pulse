@@ -1,8 +1,7 @@
 """Chatbot routes — for org users (employee / manager). KPMG admins have no org."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from ..auth.security import CurrentUser, get_current_user
 from ..db import get_conn
@@ -11,16 +10,15 @@ from . import chat as coach_chat
 
 router = APIRouter(tags=["coach"])
 
+# Image + PDF only (audio comes in a later pass). 15 MB per file cap.
+ALLOWED_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+MAX_FILE_BYTES = 15 * 1024 * 1024
+
 
 def require_org_user(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if not user.org_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Coach is for organization users")
     return user
-
-
-class ChatRequest(BaseModel):
-    message: str
-    conversation_id: str | None = None
 
 
 def _owns(conn, conversation_id: str, user_id: str) -> bool:
@@ -32,17 +30,37 @@ def _owns(conn, conversation_id: str, user_id: str) -> bool:
 
 
 @router.post("/chat")
-def chat(req: ChatRequest, user: CurrentUser = Depends(require_org_user)):
-    if req.conversation_id:
+async def chat(
+    message: str = Form(""),
+    conversation_id: str | None = Form(None),
+    files: list[UploadFile] = File(default=[]),
+    user: CurrentUser = Depends(require_org_user),
+):
+    if conversation_id:
         with get_conn() as conn:
-            if not _owns(conn, req.conversation_id, user.id):
+            if not _owns(conn, conversation_id, user.id):
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+
+    attachments: list[tuple[str, bytes, str]] = []
+    for f in files:
+        mime = f.content_type or ""
+        if mime not in ALLOWED_MIME:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported file type: {mime or f.filename}")
+        data = await f.read()
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{f.filename} exceeds 15 MB")
+        attachments.append((mime, data, f.filename or "file"))
+
+    if not message.strip() and not attachments:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Send a message or attach a file")
+
     try:
         result = coach_chat.run_turn(
-            message=req.message,
+            message=message,
             org_id=user.org_id,  # type: ignore[arg-type]
             user_id=user.id,
-            conversation_id=req.conversation_id,
+            conversation_id=conversation_id,
+            attachments=attachments,
         )
     except RateLimited:
         raise HTTPException(

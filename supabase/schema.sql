@@ -129,8 +129,11 @@ CREATE TABLE IF NOT EXISTS interaction_signals (
     signal_id       TEXT NOT NULL,        -- e.g. "VAL-5"
     pillar          TEXT NOT NULL,
     polarity        INT  NOT NULL,        -- +1 or -1
+    evidence        TEXT,                 -- short quote/paraphrase that triggered the signal
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- For databases created before `evidence` existed:
+ALTER TABLE interaction_signals ADD COLUMN IF NOT EXISTS evidence TEXT;
 
 CREATE INDEX IF NOT EXISTS interaction_signals_org_pillar_idx ON interaction_signals(org_id, pillar);
 CREATE INDEX IF NOT EXISTS interaction_signals_user_idx ON interaction_signals(user_id);

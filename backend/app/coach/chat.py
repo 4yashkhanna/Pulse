@@ -46,9 +46,22 @@ def _format_history(history: list[dict], new_message: str) -> str:
 
 
 def run_turn(
-    *, message: str, org_id: str, user_id: str, conversation_id: str | None
+    *,
+    message: str,
+    org_id: str,
+    user_id: str,
+    conversation_id: str | None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> CoachResult:
     settings = get_settings()
+    attachments = attachments or []
+    attach_note = (
+        "\n\n[attached: " + ", ".join(name for _, _, name in attachments) + "]"
+        if attachments
+        else ""
+    )
+    # What we embed/tag/store as the user's text. If they sent only files, use a placeholder.
+    text = message.strip() or "(see attached file)"
 
     # Fetch org config + history, create conversation if needed.
     with get_conn() as conn:
@@ -61,7 +74,8 @@ def run_turn(
             title = title_row["title"] if title_row else "New chat"
         else:
             history = []
-            title = (message[:48] + "…") if len(message) > 48 else message
+            base_title = message.strip() or (attachments[0][2] if attachments else "New chat")
+            title = (base_title[:48] + "…") if len(base_title) > 48 else base_title
             conv = conn.execute(
                 "INSERT INTO conversations (org_id, user_id, title) VALUES (%s,%s,%s) RETURNING id",
                 (org_id, user_id, title),
@@ -69,8 +83,8 @@ def run_turn(
             conversation_id = str(conv["id"])
             conn.commit()
 
-    # Retrieve org knowledge + generate.
-    chunks = retrieve(message, org_id=org_id, k=6)
+    # Retrieve org knowledge + generate (passing any uploaded images/PDFs to the model).
+    chunks = retrieve(text, org_id=org_id, k=6)
     system_prompt = build_system_prompt(
         chunks,
         org_name=cfg.get("name", "the organization"),
@@ -78,13 +92,17 @@ def run_turn(
         maturity_label=cfg.get("maturity_label"),
         coach_prompt=cfg.get("coach_prompt"),
     )
-    reply = generate(system_prompt, _format_history(history, message))
+    reply = generate(
+        system_prompt,
+        _format_history(history, text),
+        attachments=[(mime, data) for mime, data, _ in attachments],
+    )
 
     # Persist both messages, bump conversation timestamp.
     with get_conn() as conn:
         user_msg = conn.execute(
             "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'user',%s) RETURNING id",
-            (conversation_id, message),
+            (conversation_id, message + attach_note),
         ).fetchone()
         conn.execute(
             "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
@@ -106,7 +124,7 @@ def run_turn(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 message_id=user_msg_id,
-                user_message=message,
+                user_message=text,
                 coach_reply=reply,
             )
         except Exception:  # noqa: BLE001

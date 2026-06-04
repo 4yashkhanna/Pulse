@@ -22,8 +22,12 @@ Return JSON with:
 - evidence_backed: true if the user grounds a decision in real evidence; false if assumption/instinct.
 - handoff: true if the right next step is real human work (field observation, real user \
 testing, ethical/stakeholder judgment) that AI should not simulate.
-- fired_signals: the IDs of signals CLEARLY present in this turn. Only include a signal if \
-the user's words genuinely demonstrate it — do not guess. Most turns fire 1-4 signals.
+- fired_signals: the signals CLEARLY present in this turn. For each, give:
+    - id: the signal id (only include a signal if the user's words genuinely demonstrate it — do not guess)
+    - evidence: a SHORT (max ~20 words) direct quote or tight paraphrase of what the USER said \
+that demonstrates this signal. This is the human-readable reason, so make it concrete and specific \
+to what they actually wrote.
+  Most turns fire 1-4 signals.
 
 SIGNAL CATALOGUE (id (+/-): meaning):
 {prompt_catalog()}"""
@@ -35,7 +39,17 @@ TAG_SCHEMA = {
         "usage_type": {"type": "string", "enum": USAGE_TYPES},
         "evidence_backed": {"type": "boolean"},
         "handoff": {"type": "boolean"},
-        "fired_signals": {"type": "array", "items": {"type": "string", "enum": ALL_IDS}},
+        "fired_signals": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "enum": ALL_IDS},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["id", "evidence"],
+            },
+        },
     },
     "required": ["phase", "usage_type", "evidence_backed", "handoff", "fired_signals"],
 }
@@ -50,8 +64,17 @@ def classify(user_message: str, coach_reply: str) -> dict:
 def _sanitize(raw: dict) -> dict:
     phase = raw.get("phase") if raw.get("phase") in DT_PHASES else "define"
     usage = raw.get("usage_type") if raw.get("usage_type") in USAGE_TYPES else "ideation"
-    fired = [sid for sid in (raw.get("fired_signals") or []) if sid in BY_ID]
-    fired = list(dict.fromkeys(fired))  # dedupe, keep order
+    fired: list[dict] = []
+    seen: set[str] = set()
+    for item in raw.get("fired_signals") or []:
+        if isinstance(item, dict):
+            sid = item.get("id")
+            ev = (item.get("evidence") or "").strip()
+        else:  # tolerate a bare id
+            sid, ev = item, ""
+        if sid in BY_ID and sid not in seen:
+            seen.add(sid)
+            fired.append({"id": sid, "evidence": ev[:240]})
     return {
         "phase": phase,
         "usage_type": usage,
@@ -61,15 +84,15 @@ def _sanitize(raw: dict) -> dict:
     }
 
 
-def _derive_pillar_and_quality(fired: list[str]) -> tuple[str | None, int]:
+def _derive_pillar_and_quality(fired: list[dict]) -> tuple[str | None, int]:
     """Back-compat fields for the interactions row: the dominant pillar touched and a
     coarse 1-5 quality from the positive/negative ratio of fired signals."""
     if not fired:
         return None, 3
     pillar_counts: dict[str, int] = {}
     pos = neg = 0
-    for sid in fired:
-        s = BY_ID[sid]
+    for item in fired:
+        s = BY_ID[item["id"]]
         pillar_counts[s.pillar] = pillar_counts.get(s.pillar, 0) + 1
         if s.polarity > 0:
             pos += 1
@@ -108,15 +131,15 @@ def tag_and_store(
             ),
         ).fetchone()
         interaction_id = str(row["id"])
-        for sid in fired:
-            s = BY_ID[sid]
+        for item in fired:
+            s = BY_ID[item["id"]]
             conn.execute(
                 """
                 INSERT INTO interaction_signals
-                    (interaction_id, org_id, user_id, signal_id, pillar, polarity)
-                VALUES (%s,%s,%s,%s,%s,%s)
+                    (interaction_id, org_id, user_id, signal_id, pillar, polarity, evidence)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (interaction_id, org_id, user_id, sid, s.pillar, s.polarity),
+                (interaction_id, org_id, user_id, item["id"], s.pillar, s.polarity, item["evidence"]),
             )
         conn.commit()
 
@@ -129,7 +152,13 @@ def tag_and_store(
         "pillar": pillar,
         "quality_score": quality,
         "fired_signals": [
-            {"id": sid, "pillar": BY_ID[sid].pillar, "polarity": BY_ID[sid].polarity, "text": BY_ID[sid].text}
-            for sid in fired
+            {
+                "id": item["id"],
+                "pillar": BY_ID[item["id"]].pillar,
+                "polarity": BY_ID[item["id"]].polarity,
+                "text": BY_ID[item["id"]].text,
+                "evidence": item["evidence"],
+            }
+            for item in fired
         ],
     }

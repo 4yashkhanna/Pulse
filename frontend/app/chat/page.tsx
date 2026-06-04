@@ -25,7 +25,9 @@ function Chat() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [lastReply, setLastReply] = useState<ChatReply | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const loadConvos = (q?: string) => listConversations(q).then(setConversations);
   useEffect(() => {
@@ -53,16 +55,20 @@ function Chat() {
     setMessages([]);
     setLastReply(null);
     setInput("");
+    setFiles([]);
   }
 
   async function submit() {
     const text = input.trim();
-    if (!text || loading) return;
+    if ((!text && files.length === 0) || loading) return;
+    const attached = files;
+    const note = attached.length ? ` 📎 ${attached.map((f) => f.name).join(", ")}` : "";
     setInput("");
-    setMessages((m) => [...m, { role: "user", content: text }]);
+    setFiles([]);
+    setMessages((m) => [...m, { role: "user", content: (text || "(file)") + note }]);
     setLoading(true);
     try {
-      const r = await sendMessage(text, activeId);
+      const r = await sendMessage(text, activeId, attached);
       setActiveId(r.conversation_id);
       setLastReply(r);
       setMessages((m) => [
@@ -150,11 +156,45 @@ function Chat() {
           ))}
           {loading && <div className="bubble coach muted">Coaching…</div>}
         </div>
+        {files.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 16px 8px" }}>
+            {files.map((f, i) => (
+              <span key={i} className="chip" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                📎 {f.name}
+                <span
+                  style={{ cursor: "pointer" }}
+                  onClick={() => setFiles((fs) => fs.filter((_, j) => j !== i))}
+                >
+                  ×
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="chat-input-row">
+          <input
+            ref={fileRef}
+            type="file"
+            hidden
+            multiple
+            accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+            onChange={(e) => {
+              setFiles((fs) => [...fs, ...Array.from(e.target.files || [])]);
+              if (fileRef.current) fileRef.current.value = "";
+            }}
+          />
+          <button
+            className="btn"
+            style={{ background: "var(--surface)", color: "var(--blue)", border: "0.5px solid var(--border-mid)", padding: "0 14px" }}
+            onClick={() => fileRef.current?.click()}
+            title="Attach image or PDF"
+          >
+            📎
+          </button>
           <textarea
             className="chat-input"
             rows={1}
-            placeholder="Message Pulse…"
+            placeholder="Message Pulse… (attach an image or PDF with 📎)"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -164,7 +204,7 @@ function Chat() {
               }
             }}
           />
-          <button className="btn" onClick={submit} disabled={loading || !input.trim()}>
+          <button className="btn" onClick={submit} disabled={loading || (!input.trim() && files.length === 0)}>
             Send
           </button>
         </div>
@@ -181,25 +221,29 @@ function Chat() {
             </div>
             {lastReply.tag.fired_signals && lastReply.tag.fired_signals.length > 0 && (
               <div style={{ marginTop: 10 }}>
-                <div className="muted" style={{ fontSize: 11, marginBottom: 5 }}>Signals observed</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {lastReply.tag.fired_signals.map((s) => (
+                <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>Signals observed</div>
+                {lastReply.tag.fired_signals.map((s) => (
+                  <div key={s.id} style={{ marginBottom: 8 }}>
                     <span
-                      key={s.id}
                       title={s.text}
                       style={{
                         fontSize: 11,
                         fontWeight: 600,
-                        padding: "3px 8px",
+                        padding: "2px 7px",
                         borderRadius: 5,
                         background: s.polarity > 0 ? "var(--teal-pale)" : "var(--coral-pale)",
                         color: s.polarity > 0 ? "#0f6e56" : "var(--coral)",
                       }}
                     >
-                      {s.polarity > 0 ? "+" : "−"} {s.id} · {s.pillar}
+                      {s.polarity > 0 ? "+" : "−"} {s.pillar}
                     </span>
-                  ))}
-                </div>
+                    {s.evidence && (
+                      <div className="muted" style={{ fontSize: 11.5, marginTop: 3, fontStyle: "italic" }}>
+                        “{s.evidence}” — {s.text}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>

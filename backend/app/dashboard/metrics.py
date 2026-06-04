@@ -51,11 +51,14 @@ def dq_score(scores: dict[str, float | None]) -> float | None:
 
 
 def _breakdown(where: str, params: tuple) -> dict[str, list[dict]]:
-    """Per pillar, the fired signals with counts — the 'because…' audit trail."""
+    """Per pillar, the fired signals with counts AND a concrete recent quote — the
+    human-readable 'because…' behind every score."""
     with get_conn() as conn:
         rows = conn.execute(
             f"""
-            SELECT pillar, signal_id, polarity, COUNT(*) AS n
+            SELECT pillar, signal_id, polarity, COUNT(*) AS n,
+                   (array_agg(evidence ORDER BY created_at DESC)
+                      FILTER (WHERE evidence IS NOT NULL AND evidence <> ''))[1] AS example
             FROM interaction_signals WHERE {where}
             GROUP BY pillar, signal_id, polarity ORDER BY n DESC
             """,
@@ -71,6 +74,7 @@ def _breakdown(where: str, params: tuple) -> dict[str, list[dict]]:
                     "polarity": int(r["polarity"]),
                     "count": int(r["n"]),
                     "text": BY_ID[sid].text if sid in BY_ID else sid,
+                    "example": r["example"],
                 }
             )
     return out

@@ -81,17 +81,29 @@ def embed_texts(texts: list[str], *, task: str = "RETRIEVAL_DOCUMENT") -> list[l
     raise NotImplementedError(f"Embeddings for provider '{settings.llm_provider}' not wired yet.")
 
 
-def generate(system_prompt: str, user_content: str, *, temperature: float = 0.6) -> str:
-    """Single-shot text generation for the coached reply."""
+def generate(
+    system_prompt: str,
+    user_content: str,
+    *,
+    temperature: float = 0.6,
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> str:
+    """Single-shot text generation for the coached reply.
+
+    `attachments` is a list of (mime_type, raw_bytes) — images or PDFs the user uploaded.
+    Gemini reads them natively as additional content parts."""
     settings = get_settings()
     if settings.llm_provider == "gemini":
         from google.genai import types
 
         client = _gemini_client()
+        contents: list = [user_content]
+        for mime, data in attachments or []:
+            contents.append(types.Part.from_bytes(data=data, mime_type=mime))
         resp = _with_retry(
             lambda: client.models.generate_content(
                 model=settings.chat_model,
-                contents=user_content,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     temperature=temperature,

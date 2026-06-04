@@ -117,6 +117,25 @@ CREATE INDEX IF NOT EXISTS interactions_org_idx ON interactions(org_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
 
 -- ---------------------------------------------------------------------------
+-- Fired signals: the audit trail behind every pillar score. One row per
+-- behavioural signal the tagger observed in a turn (see app/coach/signals.py).
+-- org_id / user_id are denormalised so the dashboard can aggregate without joins.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS interaction_signals (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    interaction_id  UUID REFERENCES interactions(id) ON DELETE CASCADE,
+    org_id          UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    signal_id       TEXT NOT NULL,        -- e.g. "VAL-5"
+    pillar          TEXT NOT NULL,
+    polarity        INT  NOT NULL,        -- +1 or -1
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS interaction_signals_org_pillar_idx ON interaction_signals(org_id, pillar);
+CREATE INDEX IF NOT EXISTS interaction_signals_user_idx ON interaction_signals(user_id);
+
+-- ---------------------------------------------------------------------------
 -- Mocked assessment baseline (per org)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS baseline (

@@ -4,19 +4,19 @@ export default function PillarBars({
   scores,
   baseline,
 }: {
-  scores: Record<string, number>;
+  scores: Record<string, number | null>;
   baseline?: Record<string, number>;
 }) {
   return (
     <div>
       {PILLAR_ORDER.map((p) => {
-        const v = scores[p] ?? 0;
+        const v = scores[p];
         const b = baseline?.[p];
         return (
           <div className="bar-row" key={p}>
             <div className="bar-label">{p}</div>
             <div className="bar-track">
-              <div className="bar-fill" style={{ width: `${v}%` }} />
+              {v != null && <div className="bar-fill" style={{ width: `${v}%` }} />}
               {b !== undefined && (
                 <div
                   style={{
@@ -31,7 +31,9 @@ export default function PillarBars({
                 />
               )}
             </div>
-            <div className="bar-val">{v.toFixed(0)}</div>
+            <div className="bar-val">
+              {v != null ? v.toFixed(0) : <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>—</span>}
+            </div>
           </div>
         );
       })}

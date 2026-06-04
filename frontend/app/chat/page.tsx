@@ -177,13 +177,31 @@ function Chat() {
             <div className="card-label">How this turn was measured</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               <span className="chip phase">{lastReply.tag.phase}</span>
-              <span className="chip">{lastReply.tag.pillar}</span>
               <span className="chip">{lastReply.tag.usage_type}</span>
             </div>
-            <div className="muted" style={{ marginTop: 10 }}>
-              Quality {lastReply.tag.quality_score}/5 ·{" "}
-              {lastReply.tag.evidence_backed ? "evidence-backed" : "assumption-based"}
-            </div>
+            {lastReply.tag.fired_signals && lastReply.tag.fired_signals.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div className="muted" style={{ fontSize: 11, marginBottom: 5 }}>Signals observed</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {lastReply.tag.fired_signals.map((s) => (
+                    <span
+                      key={s.id}
+                      title={s.text}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "3px 8px",
+                        borderRadius: 5,
+                        background: s.polarity > 0 ? "var(--teal-pale)" : "var(--coral-pale)",
+                        color: s.polarity > 0 ? "#0f6e56" : "var(--coral)",
+                      }}
+                    >
+                      {s.polarity > 0 ? "+" : "−"} {s.id} · {s.pillar}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="card">

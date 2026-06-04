@@ -22,15 +22,71 @@ function PhaseBars({ counts }: { counts: Record<string, number> }) {
   );
 }
 
+const PILLAR_ORDER = ["values", "behavior", "climate", "process", "resources", "success"];
+
+function Breakdown({ data }: { data: any }) {
+  // Show, per pillar, the score and the signals that drove it (the audit trail).
+  return (
+    <div className="card">
+      <div className="card-label">Why these scores — the signals behind each pillar</div>
+      {PILLAR_ORDER.map((p) => {
+        const score = data.pillar_scores?.[p];
+        const items = (data.breakdown?.[p] || []) as any[];
+        if (!items.length) {
+          return (
+            <div key={p} style={{ padding: "8px 0", borderBottom: "0.5px solid var(--border)" }}>
+              <span style={{ textTransform: "capitalize", fontWeight: 700, color: "var(--ink-2)" }}>{p}</span>
+              <span className="muted" style={{ marginLeft: 8 }}>not enough data yet</span>
+            </div>
+          );
+        }
+        return (
+          <div key={p} style={{ padding: "10px 0", borderBottom: "0.5px solid var(--border)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+              <span style={{ textTransform: "capitalize", fontWeight: 700, color: "var(--blue)" }}>{p}</span>
+              <span style={{ fontWeight: 700 }}>{score != null ? `${score.toFixed(0)}/100` : "—"}</span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {items.map((it) => (
+                <span
+                  key={it.signal_id}
+                  title={it.text}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "3px 8px",
+                    borderRadius: 5,
+                    background: it.polarity > 0 ? "var(--teal-pale)" : "var(--coral-pale)",
+                    color: it.polarity > 0 ? "#0f6e56" : "var(--coral)",
+                  }}
+                >
+                  {it.polarity > 0 ? "+" : "−"} {it.signal_id} ×{it.count}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div className="muted" style={{ marginTop: 10, fontSize: 11 }}>
+        Each chip is a behavioural signal observed in the coaching conversations. Score =
+        positive signals ÷ all signals for that pillar. Hover a chip for its meaning.
+      </div>
+    </div>
+  );
+}
+
 function Individual({ data }: { data: any }) {
-  const delta = data.baseline_dq != null ? Math.round((data.dq_score - data.baseline_dq) * 10) / 10 : null;
+  const delta =
+    data.baseline_dq != null && data.dq_score != null
+      ? Math.round((data.dq_score - data.baseline_dq) * 10) / 10
+      : null;
   return (
     <>
       <div className="grid grid-3" style={{ marginBottom: 16 }}>
         <div className="card">
           <div className="card-label">{data.name ? `${data.name}'s DQ` : "My DQ Score"}</div>
           <div>
-            <span className="metric-big">{data.dq_score}</span>
+            <span className="metric-big">{data.dq_score ?? "—"}</span>
             {delta != null && (
               <span className={`metric-delta ${delta >= 0 ? "up" : "down"}`}>
                 {delta >= 0 ? "▲" : "▼"} {Math.abs(delta)}
@@ -50,7 +106,7 @@ function Individual({ data }: { data: any }) {
           <div className="metric-big">{data.total_interactions}</div>
         </div>
       </div>
-      <div className="grid grid-2">
+      <div className="grid grid-2" style={{ marginBottom: 16 }}>
         <div className="card">
           <div className="card-label">Fluency by pillar (vs baseline)</div>
           <PillarBars scores={data.pillar_scores} baseline={data.baseline_pillar_scores} />
@@ -65,6 +121,7 @@ function Individual({ data }: { data: any }) {
           )}
         </div>
       </div>
+      {data.breakdown && <Breakdown data={data} />}
     </>
   );
 }

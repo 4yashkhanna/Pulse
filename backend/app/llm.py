@@ -21,18 +21,22 @@ class RateLimited(Exception):
     """Raised when the provider rate-limits us after retries are exhausted."""
 
 
-def _is_rate_limit(exc: Exception) -> bool:
-    s = str(exc)
-    return "429" in s or "RESOURCE_EXHAUSTED" in s or "exhausted" in s.lower()
+def _is_transient(exc: Exception) -> bool:
+    """Rate limits (429) and temporary server errors (503 overloaded) — both worth a retry."""
+    s = str(exc).lower()
+    return any(
+        tok in s
+        for tok in ("429", "resource_exhausted", "exhausted", "503", "unavailable", "overloaded", "high demand")
+    )
 
 
-def _with_retry(fn: Callable[[], T], *, attempts: int = 3, base_delay: float = 2.0) -> T:
-    """Retry on rate-limit (429) with exponential backoff; re-raise other errors."""
+def _with_retry(fn: Callable[[], T], *, attempts: int = 4, base_delay: float = 2.0) -> T:
+    """Retry transient provider errors with exponential backoff; re-raise other errors."""
     for i in range(attempts):
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001
-            if _is_rate_limit(exc):
+            if _is_transient(exc):
                 if i == attempts - 1:
                     raise RateLimited(str(exc)) from exc
                 time.sleep(base_delay * (2**i))

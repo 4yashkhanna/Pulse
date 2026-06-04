@@ -123,12 +123,18 @@ export interface ChatReply {
   title: string;
   retrieved: { source: string | null; similarity: number }[];
   tag: {
-    pillar: string;
+    pillar: string | null;
     phase: string;
     usage_type: string;
     evidence_backed: boolean;
     quality_score: number;
     handoff: boolean;
+    fired_signals?: {
+      id: string;
+      pillar: string;
+      polarity: number;
+      text: string;
+    }[];
   } | null;
 }
 export interface Conversation {

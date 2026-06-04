@@ -53,14 +53,18 @@ def reset() -> None:
         conn.commit()
 
 
+from app.coach.signals import SIGNALS  # noqa: E402
+
 PILLARS = ["values", "behavior", "climate", "process", "resources", "success"]
 PHASES = ["empathy", "define", "ideate", "prototype", "test"]
 USAGE = ["ideation", "poc-scoping", "evidence-check", "synthesis", "reframing"]
+POS = {p: [s for s in SIGNALS if s.pillar == p and s.polarity > 0] for p in PILLARS}
+NEG = {p: [s for s in SIGNALS if s.pillar == p and s.polarity < 0] for p in PILLARS}
 
 
 def seed_dashboard_data(org_id: str, user_ids: list[str]) -> None:
-    """Mocked assessment baseline + synthetic interactions so dashboards are populated
-    before anyone has actually chatted. Real usage adds to this live."""
+    """Mocked assessment baseline + synthetic interactions WITH fired signals, so the
+    signal-based dashboards are populated before anyone has chatted. Real usage adds live."""
     with get_conn() as conn:
         baseline = {"values": 46, "behavior": 40, "climate": 50, "process": 38, "resources": 44, "success": 39}
         for pillar, score in baseline.items():
@@ -69,29 +73,45 @@ def seed_dashboard_data(org_id: str, user_ids: list[str]) -> None:
                 (org_id, pillar, score),
             )
         random.seed(11)
-        n = 0
+        n_int = n_sig = 0
         for uid in user_ids:
-            for _ in range(10):
+            for _ in range(16):
                 months_ago = random.randint(0, 4)
                 base_q = 2.3 + (4 - months_ago) * 0.5
                 quality = max(1, min(5, round(random.gauss(base_q, 0.6))))
-                conn.execute(
+                pillar = random.choice(PILLARS)
+                row = conn.execute(
                     """
                     INSERT INTO interactions
                         (org_id, user_id, pillar, phase, usage_type, evidence_backed,
                          quality_score, handoff, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days'))
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days')) RETURNING id
                     """,
                     (
-                        org_id, uid,
-                        random.choice(PILLARS), random.choice(PHASES), random.choice(USAGE),
+                        org_id, uid, pillar, random.choice(PHASES), random.choice(USAGE),
                         quality >= 4 and random.random() < 0.7,
                         quality, random.random() < 0.15, months_ago,
                     ),
-                )
-                n += 1
+                ).fetchone()
+                n_int += 1
+                p_pos = 0.30 + (quality - 1) / 4 * 0.50
+                for _ in range(random.randint(2, 3)):
+                    use_pos = random.random() < p_pos
+                    pool = POS[pillar] if use_pos and POS[pillar] else (NEG[pillar] or POS[pillar])
+                    if not pool:
+                        continue
+                    sig = random.choice(pool)
+                    conn.execute(
+                        """
+                        INSERT INTO interaction_signals
+                            (interaction_id, org_id, user_id, signal_id, pillar, polarity, created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s, now() - (%s * interval '30 days'))
+                        """,
+                        (str(row["id"]), org_id, uid, sig.id, sig.pillar, sig.polarity, months_ago),
+                    )
+                    n_sig += 1
         conn.commit()
-    print(f"✓ baseline + {n} synthetic interactions seeded")
+    print(f"✓ baseline + {n_int} interactions + {n_sig} fired signals seeded")
 
 
 def seed() -> tuple[str, list[str]]:

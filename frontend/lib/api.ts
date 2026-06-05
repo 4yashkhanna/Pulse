@@ -121,7 +121,7 @@ export interface ChatReply {
   reply: string;
   conversation_id: string;
   title: string;
-  retrieved: { source: string | null; similarity: number }[];
+  retrieved: { source: string | null; scope?: string; similarity: number }[];
   tag: {
     pillar: string | null;
     phase: string;
@@ -160,6 +160,26 @@ export const getConversation = (id: string) =>
   req<{ id: string; messages: { role: string; content: string }[] }>(`/conversations/${id}`);
 export const deleteConversation = (id: string) =>
   req<any>(`/conversations/${id}`, { method: "DELETE" });
+
+// --- scoped knowledge (org users): personal / team / member ---
+function uploadTo(path: string, files: FileList | File[]) {
+  const fd = new FormData();
+  Array.from(files).forEach((f) => fd.append("files", f));
+  return req<{ results: any[] }>(path, { method: "POST", body: fd });
+}
+export const getMyDocs = () => req<KDoc[]>("/knowledge/me");
+export const uploadMyDocs = (files: FileList | File[]) => uploadTo("/knowledge/me/upload", files);
+export const deleteMyDoc = (id: string) => req<any>(`/knowledge/me/${id}`, { method: "DELETE" });
+
+export const getTeamDocs = () => req<KDoc[]>("/knowledge/team");
+export const uploadTeamDocs = (files: FileList | File[]) => uploadTo("/knowledge/team/upload", files);
+export const deleteTeamDoc = (id: string) => req<any>(`/knowledge/team/${id}`, { method: "DELETE" });
+
+export const getMemberDocs = (uid: string) => req<KDoc[]>(`/knowledge/member/${uid}`);
+export const uploadMemberDocs = (uid: string, files: FileList | File[]) =>
+  uploadTo(`/knowledge/member/${uid}/upload`, files);
+export const deleteMemberDoc = (uid: string, id: string) =>
+  req<any>(`/knowledge/member/${uid}/${id}`, { method: "DELETE" });
 
 // --- dashboards (org users) ---
 export const dashMe = () => req<any>("/dashboard/me");

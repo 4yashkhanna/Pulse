@@ -51,6 +51,7 @@ def run_turn(
     org_id: str,
     user_id: str,
     conversation_id: str | None,
+    team_id: str | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> CoachResult:
     settings = get_settings()
@@ -83,8 +84,8 @@ def run_turn(
             conversation_id = str(conv["id"])
             conn.commit()
 
-    # Retrieve org knowledge + generate (passing any uploaded images/PDFs to the model).
-    chunks = retrieve(text, org_id=org_id, k=6)
+    # Retrieve layered knowledge (org + team + personal) + generate.
+    chunks = retrieve(text, org_id=org_id, team_id=team_id, user_id=user_id, k=6)
     system_prompt = build_system_prompt(
         chunks,
         org_name=cfg.get("name", "the organization"),

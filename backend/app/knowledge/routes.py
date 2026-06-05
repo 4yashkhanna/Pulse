@@ -1,43 +1,23 @@
-"""Knowledge management routes — KPMG admin only.
-
-The no-code ingestion endpoint: a consultant uploads files in the GUI and they are
-parsed, chunked, embedded, and stored into that org's private knowledge base.
-"""
+"""Org-level knowledge routes — KPMG admin only (scope = 'org')."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from ..auth.security import CurrentUser, require_kpmg_admin
-from ..db import get_conn
-from .ingest import ingest_document
-from .parse import UnsupportedFormat
+from . import ingest
 
 router = APIRouter(prefix="/orgs/{org_id}/knowledge", tags=["knowledge"])
 
 ALLOWED = {".pdf", ".docx", ".pptx", ".txt", ".md", ".markdown"}
 
 
+def _ext_ok(name: str) -> bool:
+    return ("." + name.rsplit(".", 1)[-1].lower() if "." in name else "") in ALLOWED
+
+
 @router.get("")
 def list_documents(org_id: str, _: CurrentUser = Depends(require_kpmg_admin)):
-    with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, filename, mime, status, n_chunks, error, created_at
-            FROM knowledge_documents WHERE org_id = %s ORDER BY created_at DESC
-            """,
-            (org_id,),
-        ).fetchall()
-    return [
-        {
-            "id": str(r["id"]),
-            "filename": r["filename"],
-            "status": r["status"],
-            "n_chunks": r["n_chunks"],
-            "error": r["error"],
-            "created_at": r["created_at"].isoformat(),
-        }
-        for r in rows
-    ]
+    return ingest.list_documents(org_id, "org", org_id)
 
 
 @router.post("/upload")
@@ -46,37 +26,29 @@ async def upload(
     files: list[UploadFile] = File(...),
     user: CurrentUser = Depends(require_kpmg_admin),
 ):
-    results = []
+    payloads = []
     for f in files:
         name = f.filename or "upload"
-        ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        if ext not in ALLOWED:
-            results.append({"filename": name, "status": "error", "error": f"Unsupported type {ext}"})
+        if not _ext_ok(name):
+            payloads.append((name, f.content_type, None))
             continue
-        data = await f.read()
-        try:
-            res = ingest_document(
-                org_id=org_id,
-                filename=name,
-                mime=f.content_type,
-                data=data,
-                uploaded_by=user.id,
+        payloads.append((name, f.content_type, await f.read()))
+    results = []
+    for name, mime, data in payloads:
+        if data is None:
+            results.append({"filename": name, "status": "error", "error": "Unsupported type"})
+        else:
+            results.extend(
+                ingest.ingest_files(
+                    org_id=org_id, scope="org", scope_id=org_id, uploaded_by=user.id,
+                    files=[(name, mime, data)],
+                )
             )
-            res["filename"] = name
-            results.append(res)
-        except UnsupportedFormat as exc:
-            results.append({"filename": name, "status": "error", "error": str(exc)})
     return {"results": results}
 
 
 @router.delete("/{document_id}")
 def delete_document(org_id: str, document_id: str, _: CurrentUser = Depends(require_kpmg_admin)):
-    with get_conn() as conn:
-        r = conn.execute(
-            "DELETE FROM knowledge_documents WHERE id = %s AND org_id = %s RETURNING id",
-            (document_id, org_id),
-        ).fetchone()
-        conn.commit()
-    if not r:
+    if not ingest.delete_document(org_id, "org", org_id, document_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
     return {"deleted": document_id}

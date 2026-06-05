@@ -9,6 +9,7 @@ from .coach.routes import router as coach_router
 from .config import get_settings
 from .dashboard.routes import router as dashboard_router
 from .knowledge.routes import router as knowledge_router
+from .knowledge.scoped_routes import router as scoped_knowledge_router
 from .orgs.routes import router as orgs_router
 
 settings = get_settings()
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(orgs_router)
 app.include_router(knowledge_router)
+app.include_router(scoped_knowledge_router)
 app.include_router(coach_router)
 app.include_router(dashboard_router)
 

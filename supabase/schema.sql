@@ -47,9 +47,12 @@ CREATE TABLE IF NOT EXISTS users (
 -- ---------------------------------------------------------------------------
 -- Knowledge layer (per-org). Documents track each uploaded file.
 -- ---------------------------------------------------------------------------
+-- scope ∈ ('org','team','user'); scope_id is the org_id / team_id / user_id it belongs to.
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    scope        TEXT NOT NULL DEFAULT 'org',
+    scope_id     UUID,
     filename     TEXT NOT NULL,
     mime         TEXT,
     status       TEXT NOT NULL DEFAULT 'processing',  -- processing|ready|error
@@ -58,11 +61,15 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     uploaded_by  UUID REFERENCES users(id),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope_id UUID;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     document_id  UUID REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+    scope        TEXT NOT NULL DEFAULT 'org',
+    scope_id     UUID,
     content      TEXT NOT NULL,
     source       TEXT,
     chunk_index  INT,
@@ -70,8 +77,11 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
     embedding    vector(768),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
+ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope_id UUID;
 
 CREATE INDEX IF NOT EXISTS knowledge_chunks_org_idx ON knowledge_chunks(org_id);
+CREATE INDEX IF NOT EXISTS knowledge_chunks_scope_idx ON knowledge_chunks(scope, scope_id);
 CREATE INDEX IF NOT EXISTS knowledge_chunks_embedding_idx
     ON knowledge_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
@@ -150,19 +160,29 @@ CREATE TABLE IF NOT EXISTS baseline (
 );
 
 -- ---------------------------------------------------------------------------
--- Org-scoped vector search.
+-- Layered vector search: org knowledge + the caller's team knowledge + their
+-- personal/project knowledge, all merged and ranked by similarity.
 -- ---------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS match_chunks(UUID, vector, INT);
+
 CREATE OR REPLACE FUNCTION match_chunks(
     p_org_id        UUID,
+    p_team_id       UUID,
+    p_user_id       UUID,
     query_embedding vector(768),
     match_count     INT DEFAULT 6
 )
-RETURNS TABLE (id UUID, content TEXT, source TEXT, similarity FLOAT)
+RETURNS TABLE (id UUID, content TEXT, source TEXT, scope TEXT, similarity FLOAT)
 LANGUAGE sql STABLE AS $$
-    SELECT kc.id, kc.content, kc.source,
+    SELECT kc.id, kc.content, kc.source, kc.scope,
            1 - (kc.embedding <=> query_embedding) AS similarity
     FROM knowledge_chunks kc
     WHERE kc.org_id = p_org_id AND kc.active
+      AND (
+            kc.scope = 'org'
+            OR (kc.scope = 'team' AND kc.scope_id = p_team_id)
+            OR (kc.scope = 'user' AND kc.scope_id = p_user_id)
+          )
     ORDER BY kc.embedding <=> query_embedding
     LIMIT match_count;
 $$;

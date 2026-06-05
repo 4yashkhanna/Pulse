@@ -59,6 +59,7 @@ async def chat(
             message=message,
             org_id=user.org_id,  # type: ignore[arg-type]
             user_id=user.id,
+            team_id=user.team_id,
             conversation_id=conversation_id,
             attachments=attachments,
         )
@@ -72,7 +73,8 @@ async def chat(
         "conversation_id": result.conversation_id,
         "title": result.title,
         "retrieved": [
-            {"source": c.source, "similarity": round(c.similarity, 3)} for c in result.chunks
+            {"source": c.source, "scope": c.scope, "similarity": round(c.similarity, 3)}
+            for c in result.chunks
         ],
         "tag": result.tag,
     }

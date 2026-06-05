@@ -256,7 +256,21 @@ function Chat() {
           {lastReply?.retrieved?.map((c, i) => (
             <div className="knowledge-item" key={i}>
               <span className="kf">{c.source || "knowledge"}</span>
-              <div className="ks">match {(c.similarity * 100).toFixed(0)}%</div>
+              <div className="ks">
+                <span
+                  style={{
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    fontSize: 9,
+                    letterSpacing: "0.05em",
+                    color:
+                      c.scope === "user" ? "var(--purple)" : c.scope === "team" ? "var(--teal)" : "var(--blue-mid)",
+                  }}
+                >
+                  {c.scope === "user" ? "personal" : c.scope || "org"}
+                </span>{" "}
+                · match {(c.similarity * 100).toFixed(0)}%
+              </div>
             </div>
           ))}
         </div>

@@ -16,15 +16,15 @@ class Chunk:
 
 
 def retrieve(
-    query: str, *, org_id: str, team_id: str | None = None, user_id: str | None = None, k: int = 6
+    query: str, *, org_id: str, team_id: str | None = None, project_id: str | None = None, k: int = 6
 ) -> list[Chunk]:
-    """Embed the query and return top-k similar active chunks visible to this caller:
-    org knowledge + their team's knowledge + their personal/project knowledge."""
+    """Embed the query and return top-k similar chunks: org-general + the caller's
+    team-general + (when chatting inside a project) that project's knowledge."""
     vec = embed_query(query)
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM match_chunks(%s, %s, %s, %s::vector, %s)",
-            (org_id, team_id, user_id, to_pgvector(vec), k),
+            (org_id, team_id, project_id, to_pgvector(vec), k),
         ).fetchall()
     return [
         Chunk(content=r["content"], source=r["source"], scope=r["scope"], similarity=float(r["similarity"]))

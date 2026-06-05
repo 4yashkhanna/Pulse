@@ -29,17 +29,31 @@ def _owns(conn, conversation_id: str, user_id: str) -> bool:
     return bool(r)
 
 
+def _project_accessible(conn, project_id: str, user: CurrentUser) -> bool:
+    r = conn.execute(
+        "SELECT owner_kind, owner_id FROM projects WHERE id = %s AND org_id = %s",
+        (project_id, user.org_id),
+    ).fetchone()
+    if not r:
+        return False
+    if r["owner_kind"] == "user":
+        return str(r["owner_id"]) == user.id
+    return user.team_id is not None and str(r["owner_id"]) == user.team_id
+
+
 @router.post("/chat")
 async def chat(
     message: str = Form(""),
     conversation_id: str | None = Form(None),
+    project_id: str | None = Form(None),
     files: list[UploadFile] = File(default=[]),
     user: CurrentUser = Depends(require_org_user),
 ):
-    if conversation_id:
-        with get_conn() as conn:
-            if not _owns(conn, conversation_id, user.id):
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    with get_conn() as conn:
+        if conversation_id and not _owns(conn, conversation_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        if project_id and not _project_accessible(conn, project_id, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No access to that project")
 
     attachments: list[tuple[str, bytes, str]] = []
     for f in files:
@@ -60,6 +74,7 @@ async def chat(
             org_id=user.org_id,  # type: ignore[arg-type]
             user_id=user.id,
             team_id=user.team_id,
+            project_id=project_id,
             conversation_id=conversation_id,
             attachments=attachments,
         )
@@ -88,7 +103,7 @@ def list_conversations(q: str | None = None, user: CurrentUser = Depends(require
         if q:
             rows = conn.execute(
                 """
-                SELECT DISTINCT c.id, c.title, c.updated_at
+                SELECT DISTINCT c.id, c.title, c.updated_at, c.project_id
                 FROM conversations c
                 LEFT JOIN messages m ON m.conversation_id = c.id
                 WHERE c.user_id = %s
@@ -99,11 +114,16 @@ def list_conversations(q: str | None = None, user: CurrentUser = Depends(require
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, title, updated_at FROM conversations WHERE user_id = %s ORDER BY updated_at DESC",
+                "SELECT id, title, updated_at, project_id FROM conversations WHERE user_id = %s ORDER BY updated_at DESC",
                 (user.id,),
             ).fetchall()
     return [
-        {"id": str(r["id"]), "title": r["title"], "updated_at": r["updated_at"].isoformat()}
+        {
+            "id": str(r["id"]),
+            "title": r["title"],
+            "updated_at": r["updated_at"].isoformat(),
+            "project_id": str(r["project_id"]) if r["project_id"] else None,
+        }
         for r in rows
     ]
 

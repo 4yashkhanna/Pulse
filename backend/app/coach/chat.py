@@ -52,6 +52,7 @@ def run_turn(
     user_id: str,
     conversation_id: str | None,
     team_id: str | None = None,
+    project_id: str | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> CoachResult:
     settings = get_settings()
@@ -69,23 +70,25 @@ def run_turn(
         cfg = _org_config(conn, org_id)
         if conversation_id:
             history = _history(conn, conversation_id)
-            title_row = conn.execute(
-                "SELECT title FROM conversations WHERE id = %s", (conversation_id,)
+            row = conn.execute(
+                "SELECT title, project_id FROM conversations WHERE id = %s", (conversation_id,)
             ).fetchone()
-            title = title_row["title"] if title_row else "New chat"
+            title = row["title"] if row else "New chat"
+            # The conversation's own project is authoritative for retrieval.
+            project_id = str(row["project_id"]) if row and row["project_id"] else None
         else:
             history = []
             base_title = message.strip() or (attachments[0][2] if attachments else "New chat")
             title = (base_title[:48] + "…") if len(base_title) > 48 else base_title
             conv = conn.execute(
-                "INSERT INTO conversations (org_id, user_id, title) VALUES (%s,%s,%s) RETURNING id",
-                (org_id, user_id, title),
+                "INSERT INTO conversations (org_id, user_id, project_id, title) VALUES (%s,%s,%s,%s) RETURNING id",
+                (org_id, user_id, project_id, title),
             ).fetchone()
             conversation_id = str(conv["id"])
             conn.commit()
 
-    # Retrieve layered knowledge (org + team + personal) + generate.
-    chunks = retrieve(text, org_id=org_id, team_id=team_id, user_id=user_id, k=6)
+    # Retrieve layered knowledge (org-general + team-general + active project) + generate.
+    chunks = retrieve(text, org_id=org_id, team_id=team_id, project_id=project_id, k=6)
     system_prompt = build_system_prompt(
         chunks,
         org_name=cfg.get("name", "the organization"),

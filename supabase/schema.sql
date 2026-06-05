@@ -47,7 +47,23 @@ CREATE TABLE IF NOT EXISTS users (
 -- ---------------------------------------------------------------------------
 -- Knowledge layer (per-org). Documents track each uploaded file.
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Projects: a personal project (owner_kind='user') or a team project
+-- (owner_kind='team'). Knowledge and conversations can belong to a project.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS projects (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    owner_kind  TEXT NOT NULL,        -- 'user' | 'team'
+    owner_id    UUID NOT NULL,        -- user_id or team_id
+    created_by  UUID REFERENCES users(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_kind, owner_id);
+
 -- scope ∈ ('org','team','user'); scope_id is the org_id / team_id / user_id it belongs to.
+-- project_id is set when the document belongs to a specific project (NULL = general bucket).
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -63,6 +79,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 );
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope_id UUID;
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS project_id UUID;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -79,6 +96,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 );
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope_id UUID;
+ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS project_id UUID;
 
 CREATE INDEX IF NOT EXISTS knowledge_chunks_org_idx ON knowledge_chunks(org_id);
 CREATE INDEX IF NOT EXISTS knowledge_chunks_scope_idx ON knowledge_chunks(scope, scope_id);
@@ -92,10 +110,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id      UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id  UUID REFERENCES projects(id) ON DELETE SET NULL,
     title       TEXT NOT NULL DEFAULT 'New chat',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS messages (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -164,11 +184,14 @@ CREATE TABLE IF NOT EXISTS baseline (
 -- personal/project knowledge, all merged and ranked by similarity.
 -- ---------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS match_chunks(UUID, vector, INT);
+DROP FUNCTION IF EXISTS match_chunks(UUID, UUID, UUID, vector, INT);
 
+-- Always: org-general + the caller's team-general. Plus, when chatting inside a
+-- project, that project's own knowledge (personal or team project).
 CREATE OR REPLACE FUNCTION match_chunks(
     p_org_id        UUID,
     p_team_id       UUID,
-    p_user_id       UUID,
+    p_project_id    UUID,
     query_embedding vector(768),
     match_count     INT DEFAULT 6
 )
@@ -179,9 +202,9 @@ LANGUAGE sql STABLE AS $$
     FROM knowledge_chunks kc
     WHERE kc.org_id = p_org_id AND kc.active
       AND (
-            kc.scope = 'org'
-            OR (kc.scope = 'team' AND kc.scope_id = p_team_id)
-            OR (kc.scope = 'user' AND kc.scope_id = p_user_id)
+            (kc.scope = 'org' AND kc.project_id IS NULL)
+            OR (kc.scope = 'team' AND kc.scope_id = p_team_id AND kc.project_id IS NULL)
+            OR (kc.project_id = p_project_id)
           )
     ORDER BY kc.embedding <=> query_embedding
     LIMIT match_count;

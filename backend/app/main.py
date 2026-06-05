@@ -11,6 +11,7 @@ from .dashboard.routes import router as dashboard_router
 from .knowledge.routes import router as knowledge_router
 from .knowledge.scoped_routes import router as scoped_knowledge_router
 from .orgs.routes import router as orgs_router
+from .projects.routes import router as projects_router
 
 settings = get_settings()
 
@@ -28,6 +29,7 @@ app.include_router(auth_router)
 app.include_router(orgs_router)
 app.include_router(knowledge_router)
 app.include_router(scoped_knowledge_router)
+app.include_router(projects_router)
 app.include_router(coach_router)
 app.include_router(dashboard_router)
 

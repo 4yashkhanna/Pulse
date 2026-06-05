@@ -142,18 +142,39 @@ export interface Conversation {
   id: string;
   title: string;
   updated_at: string;
+  project_id: string | null;
 }
 export const sendMessage = (
   message: string,
   conversation_id?: string | null,
   files?: File[],
+  project_id?: string | null,
 ) => {
   const fd = new FormData();
   fd.append("message", message);
   if (conversation_id) fd.append("conversation_id", conversation_id);
+  if (project_id) fd.append("project_id", project_id);
   (files || []).forEach((f) => fd.append("files", f));
   return req<ChatReply>("/chat", { method: "POST", body: fd });
 };
+
+// --- projects (personal + team) ---
+export interface Project {
+  id: string;
+  name: string;
+  kind: "user" | "team";
+  n_docs: number;
+  can_edit: boolean;
+}
+export const listProjects = () => req<Project[]>("/projects");
+export const createProject = (name: string, kind: "user" | "team") =>
+  req<Project>("/projects", { method: "POST", body: JSON.stringify({ name, kind }) });
+export const deleteProject = (id: string) => req<any>(`/projects/${id}`, { method: "DELETE" });
+export const listProjectDocs = (id: string) => req<KDoc[]>(`/projects/${id}/knowledge`);
+export const uploadProjectDocs = (id: string, files: FileList | File[]) =>
+  uploadTo(`/projects/${id}/knowledge/upload`, files);
+export const deleteProjectDoc = (id: string, docId: string) =>
+  req<any>(`/projects/${id}/knowledge/${docId}`, { method: "DELETE" });
 export const listConversations = (q?: string) =>
   req<Conversation[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getConversation = (id: string) =>

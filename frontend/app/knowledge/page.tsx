@@ -1,59 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Guard from "@/components/Guard";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import { useAuth } from "@/lib/auth";
-import {
-  dashTeam,
-  deleteMemberDoc,
-  deleteMyDoc,
-  deleteTeamDoc,
-  getMemberDocs,
-  getMyDocs,
-  getTeamDocs,
-  uploadMemberDocs,
-  uploadMyDocs,
-  uploadTeamDocs,
-} from "@/lib/api";
+import { deleteTeamDoc, getTeamDocs, uploadTeamDocs } from "@/lib/api";
 
-function Knowledge() {
+function TeamKnowledge() {
   const { user } = useAuth();
   const isManager = user?.role === "manager";
-  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
-  const [memberId, setMemberId] = useState<string>("");
-
-  useEffect(() => {
-    if (isManager) {
-      dashTeam()
-        .then((t) => setMembers((t.members || []).filter((m: any) => m.id !== user?.id)))
-        .catch(() => {});
-    }
-  }, [isManager, user?.id]);
-
   return (
     <div className="page">
-      <div className="page-title">Knowledge</div>
+      <div className="page-title">Team Knowledge</div>
       <div className="page-sub">
-        Add documents the coach should draw on. These stack on top of KPMG&apos;s org-wide knowledge.
+        The general knowledge base shared with everyone on your team.
       </div>
 
-      {/* Personal / project knowledge — everyone */}
       <KnowledgePanel
-        title="My project knowledge (only me)"
-        hint="Files only you see — like adding documents to a Claude Project. The coach uses these in your chats."
-        load={getMyDocs}
-        upload={uploadMyDocs}
-        remove={deleteMyDoc}
-      />
-
-      {/* Team knowledge — manager edits, members view */}
-      <KnowledgePanel
-        title={isManager ? "Team knowledge (shared with your team)" : "Team knowledge (read-only)"}
+        title={isManager ? "General team knowledge" : "General team knowledge (read-only)"}
         hint={
           isManager
-            ? "Files shared with everyone on your team. Only you (the manager) can add or remove these."
-            : "Documents your manager shared with the whole team. Used in everyone's chats."
+            ? "Files every team member's coach can draw on, in any chat. Only you (the manager) can edit these."
+            : "Documents your manager shared with the whole team. The coach uses these in all your chats."
         }
         canEdit={isManager}
         load={getTeamDocs}
@@ -61,37 +28,11 @@ function Knowledge() {
         remove={deleteTeamDoc}
       />
 
-      {/* Manager → a specific member's personal knowledge */}
-      {isManager && (
-        <div className="card">
-          <div className="card-label">Give a team member their own knowledge</div>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
-            Add files to a specific person&apos;s personal knowledge base — useful for setting up
-            someone&apos;s project before they start.
-          </div>
-          <select
-            className="select"
-            style={{ marginBottom: 14 }}
-            value={memberId}
-            onChange={(e) => setMemberId(e.target.value)}
-          >
-            <option value="">Select a team member…</option>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-          {memberId && (
-            <KnowledgePanel
-              key={memberId}
-              title={`${members.find((m) => m.id === memberId)?.name}'s knowledge`}
-              hint="Files added to this person's personal knowledge base."
-              load={() => getMemberDocs(memberId)}
-              upload={(files) => uploadMemberDocs(memberId, files)}
-              remove={(id) => deleteMemberDoc(memberId, id)}
-            />
-          )}
-        </div>
-      )}
+      <div className="card muted" style={{ fontSize: 13 }}>
+        Looking for <strong>personal or project-specific</strong> files? Those live in{" "}
+        <strong>Projects</strong> inside the Coach — create a project there, add its files, and
+        chat within it. {isManager && "Team projects (with their own files) are created there too."}
+      </div>
     </div>
   );
 }
@@ -99,7 +40,7 @@ function Knowledge() {
 export default function Page() {
   return (
     <Guard role={["employee", "manager"]}>
-      <Knowledge />
+      <TeamKnowledge />
     </Guard>
   );
 }

@@ -20,15 +20,16 @@ def ingest_document(
     mime: str | None,
     data: bytes,
     uploaded_by: str | None,
+    project_id: str | None = None,
 ) -> dict:
-    """Process one uploaded file into the given scope."""
+    """Process one uploaded file into the given scope (and optionally a project)."""
     with get_conn() as conn:
         doc = conn.execute(
             """
-            INSERT INTO knowledge_documents (org_id, scope, scope_id, filename, mime, status, uploaded_by)
-            VALUES (%s,%s,%s,%s,%s,'processing',%s) RETURNING id
+            INSERT INTO knowledge_documents (org_id, scope, scope_id, project_id, filename, mime, status, uploaded_by)
+            VALUES (%s,%s,%s,%s,%s,%s,'processing',%s) RETURNING id
             """,
-            (org_id, scope, scope_id, filename, mime, uploaded_by),
+            (org_id, scope, scope_id, project_id, filename, mime, uploaded_by),
         ).fetchone()
         conn.commit()
         document_id = str(doc["id"])
@@ -47,10 +48,10 @@ def ingest_document(
                     cur.execute(
                         """
                         INSERT INTO knowledge_chunks
-                            (org_id, document_id, scope, scope_id, content, source, chunk_index, embedding)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s::vector)
+                            (org_id, document_id, scope, scope_id, project_id, content, source, chunk_index, embedding)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
                         """,
-                        (org_id, document_id, scope, scope_id, content, filename, idx, to_pgvector(emb)),
+                        (org_id, document_id, scope, scope_id, project_id, content, filename, idx, to_pgvector(emb)),
                     )
             conn.commit()
         _mark(document_id, "ready", len(chunks), None)
@@ -61,29 +62,25 @@ def ingest_document(
 
 
 def ingest_files(
-    *, org_id: str, scope: str, scope_id: str, uploaded_by: str | None, files: list[tuple[str, str | None, bytes]]
+    *,
+    org_id: str,
+    scope: str,
+    scope_id: str,
+    uploaded_by: str | None,
+    files: list[tuple[str, str | None, bytes]],
+    project_id: str | None = None,
 ) -> list[dict]:
     """files: list of (filename, mime, data). Returns one result per file."""
     return [
         ingest_document(
-            org_id=org_id, scope=scope, scope_id=scope_id,
+            org_id=org_id, scope=scope, scope_id=scope_id, project_id=project_id,
             filename=name, mime=mime, data=data, uploaded_by=uploaded_by,
         )
         for name, mime, data in files
     ]
 
 
-def list_documents(org_id: str, scope: str, scope_id: str) -> list[dict]:
-    with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, filename, status, n_chunks, error, created_at
-            FROM knowledge_documents
-            WHERE org_id = %s AND scope = %s AND scope_id = %s
-            ORDER BY created_at DESC
-            """,
-            (org_id, scope, scope_id),
-        ).fetchall()
+def _rows_to_docs(rows) -> list[dict]:
     return [
         {
             "id": str(r["id"]),
@@ -97,11 +94,49 @@ def list_documents(org_id: str, scope: str, scope_id: str) -> list[dict]:
     ]
 
 
+def list_documents(org_id: str, scope: str, scope_id: str) -> list[dict]:
+    """General-bucket documents (project_id IS NULL) for an org or team scope."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, filename, status, n_chunks, error, created_at
+            FROM knowledge_documents
+            WHERE org_id = %s AND scope = %s AND scope_id = %s AND project_id IS NULL
+            ORDER BY created_at DESC
+            """,
+            (org_id, scope, scope_id),
+        ).fetchall()
+    return _rows_to_docs(rows)
+
+
 def delete_document(org_id: str, scope: str, scope_id: str, document_id: str) -> bool:
     with get_conn() as conn:
         r = conn.execute(
-            "DELETE FROM knowledge_documents WHERE id=%s AND org_id=%s AND scope=%s AND scope_id=%s RETURNING id",
+            "DELETE FROM knowledge_documents WHERE id=%s AND org_id=%s AND scope=%s AND scope_id=%s "
+            "AND project_id IS NULL RETURNING id",
             (document_id, org_id, scope, scope_id),
+        ).fetchone()
+        conn.commit()
+    return bool(r)
+
+
+def list_project_documents(project_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, filename, status, n_chunks, error, created_at
+            FROM knowledge_documents WHERE project_id = %s ORDER BY created_at DESC
+            """,
+            (project_id,),
+        ).fetchall()
+    return _rows_to_docs(rows)
+
+
+def delete_project_document(project_id: str, document_id: str) -> bool:
+    with get_conn() as conn:
+        r = conn.execute(
+            "DELETE FROM knowledge_documents WHERE id=%s AND project_id=%s RETURNING id",
+            (document_id, project_id),
         ).fetchone()
         conn.commit()
     return bool(r)

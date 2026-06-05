@@ -15,7 +15,7 @@ export default function Nav() {
       ? [{ href: "/admin", label: "Organizations" }]
       : [
           { href: "/chat", label: "Coach" },
-          { href: "/knowledge", label: "Knowledge" },
+          { href: "/knowledge", label: "Team Knowledge" },
           { href: "/dashboard", label: "Performance" },
         ];
 

@@ -26,7 +26,6 @@ def require_org_user(user: CurrentUser = Depends(get_current_user)) -> CurrentUs
 
 class ProjectCreate(BaseModel):
     name: str
-    kind: str = "user"  # 'user' (personal) | 'team'
 
 
 def _access(user: CurrentUser, project: dict) -> tuple[bool, bool]:
@@ -90,20 +89,90 @@ def list_projects(user: CurrentUser = Depends(require_org_user)):
 
 @router.post("", status_code=201)
 def create_project(body: ProjectCreate, user: CurrentUser = Depends(require_org_user)):
-    if body.kind == "team":
-        if user.role != "manager" or not user.team_id:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a team manager can create a team project")
-        owner_kind, owner_id = "team", user.team_id
-    else:
-        owner_kind, owner_id = "user", user.id
+    """Projects are personal — each belongs to the user who creates it."""
     with get_conn() as conn:
         r = conn.execute(
             "INSERT INTO projects (org_id, name, owner_kind, owner_id, created_by) "
-            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
-            (user.org_id, body.name.strip() or "Untitled project", owner_kind, owner_id, user.id),
+            "VALUES (%s,%s,'user',%s,%s) RETURNING id",
+            (user.org_id, body.name.strip() or "Untitled project", user.id, user.id),
         ).fetchone()
         conn.commit()
-    return {"id": str(r["id"]), "name": body.name, "kind": owner_kind, "can_edit": True, "n_docs": 0}
+    return {"id": str(r["id"]), "name": body.name, "kind": "user", "can_edit": True, "n_docs": 0}
+
+
+# --------------------------------------------------------------------------- #
+# Importing team knowledge folders into a project
+# --------------------------------------------------------------------------- #
+@router.get("/{project_id}/folders")
+def project_folders(project_id: str, user: CurrentUser = Depends(require_org_user)):
+    """Folders imported into this project + the team folders the user could import
+    (granted access, not yet imported)."""
+    project = _load(project_id)
+    _, can_edit = _access(user, project)
+    if not can_edit:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No access to this project")
+    with get_conn() as conn:
+        imported = conn.execute(
+            """
+            SELECT f.id, f.name, (SELECT COUNT(*) FROM knowledge_documents d WHERE d.folder_id=f.id) AS n_docs
+            FROM project_folder_imports pfi JOIN knowledge_folders f ON f.id = pfi.folder_id
+            WHERE pfi.project_id = %s ORDER BY f.name
+            """,
+            (project_id,),
+        ).fetchall()
+        # Granted folders not yet imported into this project.
+        available = conn.execute(
+            """
+            SELECT f.id, f.name, (SELECT COUNT(*) FROM knowledge_documents d WHERE d.folder_id=f.id) AS n_docs
+            FROM knowledge_folders f
+            JOIN folder_access a ON a.folder_id = f.id AND a.user_id = %s AND a.status = 'granted'
+            WHERE f.team_id = %s
+              AND f.id NOT IN (SELECT folder_id FROM project_folder_imports WHERE project_id = %s)
+            ORDER BY f.name
+            """,
+            (user.id, user.team_id, project_id),
+        ).fetchall()
+    fmt = lambda r: {"id": str(r["id"]), "name": r["name"], "n_docs": int(r["n_docs"])}
+    return {"imported": [fmt(r) for r in imported], "available": [fmt(r) for r in available]}
+
+
+def _has_folder_access(conn, folder_id: str, user: CurrentUser) -> bool:
+    r = conn.execute(
+        "SELECT 1 FROM folder_access WHERE folder_id=%s AND user_id=%s AND status='granted'",
+        (folder_id, user.id),
+    ).fetchone()
+    return bool(r)
+
+
+@router.post("/{project_id}/folders/{folder_id}")
+def import_folder(project_id: str, folder_id: str, user: CurrentUser = Depends(require_org_user)):
+    project = _load(project_id)
+    _, can_edit = _access(user, project)
+    if not can_edit:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your project")
+    with get_conn() as conn:
+        if not _has_folder_access(conn, folder_id, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have access to that folder")
+        conn.execute(
+            "INSERT INTO project_folder_imports (project_id, folder_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+            (project_id, folder_id),
+        )
+        conn.commit()
+    return {"imported": folder_id}
+
+
+@router.delete("/{project_id}/folders/{folder_id}")
+def unimport_folder(project_id: str, folder_id: str, user: CurrentUser = Depends(require_org_user)):
+    project = _load(project_id)
+    _, can_edit = _access(user, project)
+    if not can_edit:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your project")
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM project_folder_imports WHERE project_id=%s AND folder_id=%s", (project_id, folder_id)
+        )
+        conn.commit()
+    return {"removed": folder_id}
 
 
 @router.delete("/{project_id}")

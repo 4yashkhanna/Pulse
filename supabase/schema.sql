@@ -62,6 +62,36 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_kind, owner_id);
 
+-- ---------------------------------------------------------------------------
+-- Knowledge folders: manager-curated RAG sets for a team, shareable per person.
+-- A member with granted access can import a folder into one of their projects.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS knowledge_folders (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    team_id     UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    created_by  UUID REFERENCES users(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Per-member access to a folder: 'granted' or 'requested'.
+CREATE TABLE IF NOT EXISTS folder_access (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    folder_id   UUID NOT NULL REFERENCES knowledge_folders(id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL DEFAULT 'requested',  -- granted | requested
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (folder_id, user_id)
+);
+
+-- A folder imported into a personal project (its knowledge joins that project's RAG).
+CREATE TABLE IF NOT EXISTS project_folder_imports (
+    project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    folder_id   UUID NOT NULL REFERENCES knowledge_folders(id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, folder_id)
+);
+
 -- scope ∈ ('org','team','user'); scope_id is the org_id / team_id / user_id it belongs to.
 -- project_id is set when the document belongs to a specific project (NULL = general bucket).
 CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -80,6 +110,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope_id UUID;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS project_id UUID;
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS folder_id UUID;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -97,6 +128,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'org';
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope_id UUID;
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS project_id UUID;
+ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS folder_id UUID;
 
 CREATE INDEX IF NOT EXISTS knowledge_chunks_org_idx ON knowledge_chunks(org_id);
 CREATE INDEX IF NOT EXISTS knowledge_chunks_scope_idx ON knowledge_chunks(scope, scope_id);
@@ -185,13 +217,16 @@ CREATE TABLE IF NOT EXISTS baseline (
 -- ---------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS match_chunks(UUID, vector, INT);
 DROP FUNCTION IF EXISTS match_chunks(UUID, UUID, UUID, vector, INT);
+DROP FUNCTION IF EXISTS match_chunks(UUID, UUID, UUID, UUID[], vector, INT);
 
 -- Always: org-general + the caller's team-general. Plus, when chatting inside a
--- project, that project's own knowledge (personal or team project).
+-- project: that project's own knowledge AND any imported folders (p_folder_ids =
+-- folders imported into the project that the caller has been granted access to).
 CREATE OR REPLACE FUNCTION match_chunks(
     p_org_id        UUID,
     p_team_id       UUID,
     p_project_id    UUID,
+    p_folder_ids    UUID[],
     query_embedding vector(768),
     match_count     INT DEFAULT 6
 )
@@ -202,9 +237,10 @@ LANGUAGE sql STABLE AS $$
     FROM knowledge_chunks kc
     WHERE kc.org_id = p_org_id AND kc.active
       AND (
-            (kc.scope = 'org' AND kc.project_id IS NULL)
-            OR (kc.scope = 'team' AND kc.scope_id = p_team_id AND kc.project_id IS NULL)
+            (kc.scope = 'org' AND kc.project_id IS NULL AND kc.folder_id IS NULL)
+            OR (kc.scope = 'team' AND kc.scope_id = p_team_id AND kc.project_id IS NULL AND kc.folder_id IS NULL)
             OR (kc.project_id = p_project_id)
+            OR (kc.folder_id = ANY(p_folder_ids))
           )
     ORDER BY kc.embedding <=> query_embedding
     LIMIT match_count;

@@ -21,15 +21,16 @@ def ingest_document(
     data: bytes,
     uploaded_by: str | None,
     project_id: str | None = None,
+    folder_id: str | None = None,
 ) -> dict:
-    """Process one uploaded file into the given scope (and optionally a project)."""
+    """Process one uploaded file into the given scope (project or folder optional)."""
     with get_conn() as conn:
         doc = conn.execute(
             """
-            INSERT INTO knowledge_documents (org_id, scope, scope_id, project_id, filename, mime, status, uploaded_by)
-            VALUES (%s,%s,%s,%s,%s,%s,'processing',%s) RETURNING id
+            INSERT INTO knowledge_documents (org_id, scope, scope_id, project_id, folder_id, filename, mime, status, uploaded_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,'processing',%s) RETURNING id
             """,
-            (org_id, scope, scope_id, project_id, filename, mime, uploaded_by),
+            (org_id, scope, scope_id, project_id, folder_id, filename, mime, uploaded_by),
         ).fetchone()
         conn.commit()
         document_id = str(doc["id"])
@@ -48,10 +49,10 @@ def ingest_document(
                     cur.execute(
                         """
                         INSERT INTO knowledge_chunks
-                            (org_id, document_id, scope, scope_id, project_id, content, source, chunk_index, embedding)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
+                            (org_id, document_id, scope, scope_id, project_id, folder_id, content, source, chunk_index, embedding)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
                         """,
-                        (org_id, document_id, scope, scope_id, project_id, content, filename, idx, to_pgvector(emb)),
+                        (org_id, document_id, scope, scope_id, project_id, folder_id, content, filename, idx, to_pgvector(emb)),
                     )
             conn.commit()
         _mark(document_id, "ready", len(chunks), None)
@@ -69,15 +70,36 @@ def ingest_files(
     uploaded_by: str | None,
     files: list[tuple[str, str | None, bytes]],
     project_id: str | None = None,
+    folder_id: str | None = None,
 ) -> list[dict]:
     """files: list of (filename, mime, data). Returns one result per file."""
     return [
         ingest_document(
-            org_id=org_id, scope=scope, scope_id=scope_id, project_id=project_id,
+            org_id=org_id, scope=scope, scope_id=scope_id, project_id=project_id, folder_id=folder_id,
             filename=name, mime=mime, data=data, uploaded_by=uploaded_by,
         )
         for name, mime, data in files
     ]
+
+
+def list_folder_documents(folder_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, status, n_chunks, error, created_at FROM knowledge_documents "
+            "WHERE folder_id = %s ORDER BY created_at DESC",
+            (folder_id,),
+        ).fetchall()
+    return _rows_to_docs(rows)
+
+
+def delete_folder_document(folder_id: str, document_id: str) -> bool:
+    with get_conn() as conn:
+        r = conn.execute(
+            "DELETE FROM knowledge_documents WHERE id=%s AND folder_id=%s RETURNING id",
+            (document_id, folder_id),
+        ).fetchone()
+        conn.commit()
+    return bool(r)
 
 
 def _rows_to_docs(rows) -> list[dict]:

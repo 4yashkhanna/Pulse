@@ -87,8 +87,25 @@ def run_turn(
             conversation_id = str(conv["id"])
             conn.commit()
 
-    # Retrieve layered knowledge (org-general + team-general + active project) + generate.
-    chunks = retrieve(text, org_id=org_id, team_id=team_id, project_id=project_id, k=6)
+    # Folders imported into this project that the user has been granted access to.
+    folder_ids: list[str] = []
+    if project_id:
+        with get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT pfi.folder_id FROM project_folder_imports pfi
+                JOIN folder_access fa ON fa.folder_id = pfi.folder_id
+                  AND fa.user_id = %s AND fa.status = 'granted'
+                WHERE pfi.project_id = %s
+                """,
+                (user_id, project_id),
+            ).fetchall()
+            folder_ids = [str(r["folder_id"]) for r in rows]
+
+    # Retrieve layered knowledge (org + team-general + project + imported folders).
+    chunks = retrieve(
+        text, org_id=org_id, team_id=team_id, project_id=project_id, folder_ids=folder_ids, k=6
+    )
     system_prompt = build_system_prompt(
         chunks,
         org_name=cfg.get("name", "the organization"),

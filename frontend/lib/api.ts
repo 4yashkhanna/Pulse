@@ -167,14 +167,51 @@ export interface Project {
   can_edit: boolean;
 }
 export const listProjects = () => req<Project[]>("/projects");
-export const createProject = (name: string, kind: "user" | "team") =>
-  req<Project>("/projects", { method: "POST", body: JSON.stringify({ name, kind }) });
+export const createProject = (name: string) =>
+  req<Project>("/projects", { method: "POST", body: JSON.stringify({ name }) });
 export const deleteProject = (id: string) => req<any>(`/projects/${id}`, { method: "DELETE" });
 export const listProjectDocs = (id: string) => req<KDoc[]>(`/projects/${id}/knowledge`);
 export const uploadProjectDocs = (id: string, files: FileList | File[]) =>
   uploadTo(`/projects/${id}/knowledge/upload`, files);
 export const deleteProjectDoc = (id: string, docId: string) =>
   req<any>(`/projects/${id}/knowledge/${docId}`, { method: "DELETE" });
+
+// --- knowledge folders (team, manager-curated) ---
+export interface Folder {
+  id: string;
+  name: string;
+  n_docs: number;
+  n_granted: number | null;
+  n_requests: number | null;
+  my_status: string | null; // 'granted' | 'requested' | null
+  can_edit: boolean;
+}
+export const listFolders = () => req<Folder[]>("/folders");
+export const createFolder = (name: string) =>
+  req<Folder>("/folders", { method: "POST", body: JSON.stringify({ name }) });
+export const deleteFolder = (id: string) => req<any>(`/folders/${id}`, { method: "DELETE" });
+export const listFolderDocs = (id: string) => req<KDoc[]>(`/folders/${id}/knowledge`);
+export const uploadFolderDocs = (id: string, files: FileList | File[]) =>
+  uploadTo(`/folders/${id}/knowledge/upload`, files);
+export const deleteFolderDoc = (id: string, docId: string) =>
+  req<any>(`/folders/${id}/knowledge/${docId}`, { method: "DELETE" });
+export const folderAccess = (id: string) =>
+  req<{ id: string; name: string; status: string }[]>(`/folders/${id}/access`);
+export const folderAccessChange = (id: string, user_id: string, action: "grant" | "revoke") =>
+  req<any>(`/folders/${id}/access`, { method: "POST", body: JSON.stringify({ user_id, action }) });
+export const requestFolderAccess = (id: string) =>
+  req<any>(`/folders/${id}/request`, { method: "POST" });
+
+// --- a project's imported folders ---
+export interface ProjectFolders {
+  imported: { id: string; name: string; n_docs: number }[];
+  available: { id: string; name: string; n_docs: number }[];
+}
+export const getProjectFolders = (pid: string) => req<ProjectFolders>(`/projects/${pid}/folders`);
+export const importFolder = (pid: string, fid: string) =>
+  req<any>(`/projects/${pid}/folders/${fid}`, { method: "POST" });
+export const unimportFolder = (pid: string, fid: string) =>
+  req<any>(`/projects/${pid}/folders/${fid}`, { method: "DELETE" });
 export const listConversations = (q?: string) =>
   req<Conversation[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getConversation = (id: string) =>

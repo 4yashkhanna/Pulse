@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Guard from "@/components/Guard";
 import KnowledgePanel from "@/components/KnowledgePanel";
+import MessageContent from "@/components/MessageContent";
 import {
   ChatReply,
   Conversation,
@@ -194,7 +195,7 @@ function Chat() {
               {messages.map((m, i) => (
                 <div key={i} className={`bubble ${m.role === "user" ? "user" : "coach"} ${m.handoff ? "handoff" : ""}`}>
                   {m.handoff && <div style={{ marginBottom: 6 }}><span className="chip handoff">Human handoff</span></div>}
-                  {m.content}
+                  {m.role === "assistant" ? <MessageContent content={m.content} /> : m.content}
                 </div>
               ))}
               {loading && <div className="bubble coach muted">Coaching…</div>}

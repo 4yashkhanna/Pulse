@@ -31,8 +31,8 @@ class Settings:
         self.llm_provider: str = os.getenv("LLM_PROVIDER", "gemini").lower()
         self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
         self.embed_model: str = os.getenv("EMBED_MODEL", "gemini-embedding-001")
-        self.chat_model: str = os.getenv("CHAT_MODEL", "gemini-2.5-flash")
-        self.tag_model: str = os.getenv("TAG_MODEL", "gemini-2.5-flash")
+        self.chat_model: str = os.getenv("CHAT_MODEL", "gemini-3.5-flash")
+        self.tag_model: str = os.getenv("TAG_MODEL", "gemini-3.5-flash")
         self.embed_dim: int = 768
         self.synchronous_tagging: bool = (
             os.getenv("SYNCHRONOUS_TAGGING", "true").lower() == "true"

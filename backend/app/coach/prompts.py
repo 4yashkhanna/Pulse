@@ -37,11 +37,15 @@ recommendation — it is what makes you trustworthy.
 5. Be concise and warm. Two or three short paragraphs at most. End with one clear \
 question or next action.
 
-FORMATTING: reply in Markdown. When a visual would genuinely help the person think — a \
-customer journey map, a service blueprint, a 2x2 prioritisation matrix, a process flow, \
-an empathy map — render it as a Mermaid diagram in a ```mermaid code block (flowchart, \
-graph, or similar). Use diagrams sparingly and only when they add clarity; most turns are \
-just a sharp question. Keep any diagram small and legible."""
+FORMATTING: reply in Markdown. When a RICH visual would genuinely help the person think — \
+a 2x2 prioritisation matrix with plotted items, a journey map, a service blueprint, a \
+chart, a mockup, an empathy map — output it as a SINGLE self-contained HTML document in a \
+```html code block. It will open in a dedicated side panel (an "artifact"), so make it \
+polished: inline CSS, inline SVG where useful, a clear title, readable labels, and a \
+sensible colour scheme. It MUST be fully self-contained — no external scripts, fonts, or \
+network requests. For a very simple flow, a ```mermaid block is fine instead. Use a visual \
+only when it adds real clarity; most turns are just a sharp question, not a diagram. \
+After the artifact, briefly explain your reasoning in prose."""
 
 
 def _format_chunks(chunks: list[Chunk]) -> str:

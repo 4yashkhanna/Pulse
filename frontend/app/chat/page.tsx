@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Guard from "@/components/Guard";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import MessageContent from "@/components/MessageContent";
+import ArtifactPanel, { Artifact, artifactTitle } from "@/components/ArtifactPanel";
 import {
   ChatReply,
   Conversation,
@@ -43,6 +44,7 @@ function Chat() {
   const [newProj, setNewProj] = useState("");
   const [showManage, setShowManage] = useState(false);
   const [pf, setPf] = useState<ProjectFolders | null>(null);
+  const [artifact, setArtifact] = useState<Artifact | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +81,15 @@ function Chat() {
     setLastReply(null);
     setInput("");
     setFiles([]);
+    setArtifact(null);
+  }
+
+  // Pull the first ```html / ```artifact block out of a reply, if any.
+  function extractArtifact(reply: string): Artifact | null {
+    const m = /```(?:html|artifact)\s*\n?([\s\S]*?)```/i.exec(reply);
+    if (!m) return null;
+    const html = m[1].trim();
+    return html ? { html, title: artifactTitle(html) } : null;
   }
 
   async function openConversation(id: string) {
@@ -111,6 +122,8 @@ function Chat() {
       setActiveId(r.conversation_id);
       setLastReply(r);
       setMessages((m) => [...m, { role: "assistant", content: r.reply, handoff: r.tag?.handoff }]);
+      const art = extractArtifact(r.reply);
+      if (art) setArtifact(art); // auto-open the visualization, like Claude
       loadConvos();
     } catch (e: any) {
       const msg = typeof e?.message === "string" && e.message.length < 200 ? e.message : "Could not reach the coach.";
@@ -195,7 +208,11 @@ function Chat() {
               {messages.map((m, i) => (
                 <div key={i} className={`bubble ${m.role === "user" ? "user" : "coach"} ${m.handoff ? "handoff" : ""}`}>
                   {m.handoff && <div style={{ marginBottom: 6 }}><span className="chip handoff">Human handoff</span></div>}
-                  {m.role === "assistant" ? <MessageContent content={m.content} /> : m.content}
+                  {m.role === "assistant" ? (
+                    <MessageContent content={m.content} onOpenArtifact={(html, title) => setArtifact({ html, title })} />
+                  ) : (
+                    m.content
+                  )}
                 </div>
               ))}
               {loading && <div className="bubble coach muted">Coaching…</div>}
@@ -314,6 +331,8 @@ function Chat() {
           </div>
         )}
       </aside>
+
+      <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
     </div>
   );
 }

@@ -287,16 +287,30 @@ function Chat() {
           <div className="card">
             <div className="card-label">Knowledge retrieved</div>
             {!lastReply?.retrieved?.length && <div className="muted">Knowledge used to ground the reply appears here.</div>}
-            {lastReply?.retrieved?.map((c, i) => (
-              <div className="knowledge-item" key={i}>
-                <span className="kf">{c.source || "knowledge"}</span>
-                <div className="ks">
-                  <span style={{ textTransform: "uppercase", fontWeight: 700, fontSize: 9, letterSpacing: "0.05em", color: c.scope === "user" ? "var(--purple)" : c.scope === "team" ? "var(--teal)" : "var(--blue-mid)" }}>
-                    {c.scope === "user" ? "project" : c.scope || "org"}
-                  </span>{" "}· match {(c.similarity * 100).toFixed(0)}%
+            {(() => {
+              // Collapse multiple chunks from the same document into one row (best match + count).
+              const byDoc = new Map<string, { source: string; scope?: string; similarity: number; n: number }>();
+              for (const c of lastReply?.retrieved || []) {
+                const key = `${c.source}|${c.scope}`;
+                const prev = byDoc.get(key);
+                if (!prev) byDoc.set(key, { source: c.source || "knowledge", scope: c.scope, similarity: c.similarity, n: 1 });
+                else {
+                  prev.n += 1;
+                  prev.similarity = Math.max(prev.similarity, c.similarity);
+                }
+              }
+              return Array.from(byDoc.values()).map((c, i) => (
+                <div className="knowledge-item" key={i}>
+                  <span className="kf">{c.source}</span>
+                  <div className="ks">
+                    <span style={{ textTransform: "uppercase", fontWeight: 700, fontSize: 9, letterSpacing: "0.05em", color: c.scope === "user" ? "var(--purple)" : c.scope === "team" ? "var(--teal)" : "var(--blue-mid)" }}>
+                      {c.scope === "user" ? "project" : c.scope || "org"}
+                    </span>{" "}· match {(c.similarity * 100).toFixed(0)}%
+                    {c.n > 1 && <span className="muted"> · {c.n} passages</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         )}
       </aside>

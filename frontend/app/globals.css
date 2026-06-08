@@ -178,6 +178,7 @@ a {
   background: var(--blue-pale);
   color: var(--ink);
   border-bottom-left-radius: 4px;
+  max-width: 94%; /* roomier for formatted content, tables, and diagrams */
 }
 .bubble.handoff {
   background: var(--amber-pale);
@@ -446,11 +447,15 @@ a {
   background: var(--white);
   border: 0.5px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px;
   margin: 8px 0;
   overflow-x: auto;
+  display: flex;
+  justify-content: center;
 }
 .md .mermaid-diagram svg {
-  max-width: 100%;
+  /* render at natural size for legibility; scroll horizontally if it's wide */
   height: auto;
+  min-width: 420px;
+  max-width: 100%;
 }

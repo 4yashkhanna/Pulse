@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Guard from "@/components/Guard";
-import KnowledgePanel from "@/components/KnowledgePanel";
 import MessageContent from "@/components/MessageContent";
 import ArtifactPanel, { Artifact, artifactTitle } from "@/components/ArtifactPanel";
+import KnowledgePanel from "@/components/KnowledgePanel";
 import {
   ChatReply,
   Conversation,
@@ -20,7 +20,7 @@ import {
   listConversations,
   listProjectDocs,
   listProjects,
-  sendMessage,
+  sendMessageStream,
   unimportFolder,
   uploadProjectDocs,
 } from "@/lib/api";
@@ -45,11 +45,13 @@ function Chat() {
   const [showManage, setShowManage] = useState(false);
   const [pf, setPf] = useState<ProjectFolders | null>(null);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const loadProjects = () => listProjects().then(setProjects);
-  const loadConvos = () => listConversations().then(setConversations);
+  const loadConvos  = () => listConversations().then(setConversations);
+
   useEffect(() => {
     listProjects().then((ps) => {
       setProjects(ps);
@@ -58,8 +60,9 @@ function Chat() {
     loadConvos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   useEffect(() => {
-    logRef.current?.scrollTo(0, logRef.current.scrollHeight);
+    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages, loading]);
 
   const project = projects.find((p) => p.id === activeProject) || null;
@@ -84,7 +87,6 @@ function Chat() {
     setArtifact(null);
   }
 
-  // Pull the first ```html / ```artifact block out of a reply, if any.
   function extractArtifact(reply: string): Artifact | null {
     const m = /```(?:html|artifact)\s*\n?([\s\S]*?)```/i.exec(reply);
     if (!m) return null;
@@ -115,222 +117,411 @@ function Chat() {
     const note = attached.length ? ` 📎 ${attached.map((f) => f.name).join(", ")}` : "";
     setInput("");
     setFiles([]);
+    if (textareaRef.current) textareaRef.current.style.height = "";
     setMessages((m) => [...m, { role: "user", content: (text || "(file)") + note }]);
     setLoading(true);
+    // Stream the reply: tokens render as they arrive, the tag (fired signals)
+    // lands as a final event after the reply is complete.
+    let acc = "";
+    let started = false;
+    let convId = activeId;
+    let convTitle = "";
+    let retrieved: ChatReply["retrieved"] = [];
     try {
-      const r = await sendMessage(text, activeId, attached, activeId ? undefined : activeProject);
-      setActiveId(r.conversation_id);
-      setLastReply(r);
-      setMessages((m) => [...m, { role: "assistant", content: r.reply, handoff: r.tag?.handoff }]);
-      const art = extractArtifact(r.reply);
-      if (art) setArtifact(art); // auto-open the visualization, like Claude
+      await sendMessageStream(text, activeId, attached, activeId ? undefined : activeProject, {
+        onMeta: (meta) => {
+          convId = meta.conversation_id;
+          convTitle = meta.title;
+          retrieved = meta.retrieved;
+          setActiveId(meta.conversation_id);
+        },
+        onDelta: (t) => {
+          acc += t;
+          if (!started) {
+            started = true;
+            setLoading(false);
+            setMessages((m) => [...m, { role: "assistant", content: acc }]);
+          } else {
+            setMessages((m) => {
+              const copy = m.slice();
+              copy[copy.length - 1] = { ...copy[copy.length - 1], content: acc };
+              return copy;
+            });
+          }
+        },
+        onTag: (tag) => {
+          setLastReply({ reply: acc, conversation_id: convId!, title: convTitle, retrieved, tag });
+          if (tag?.handoff) {
+            setMessages((m) => {
+              const copy = m.slice();
+              copy[copy.length - 1] = { ...copy[copy.length - 1], handoff: true };
+              return copy;
+            });
+          }
+        },
+      });
+      setLastReply((prev) =>
+        prev && prev.conversation_id === convId && prev.reply === acc
+          ? prev
+          : { reply: acc, conversation_id: convId!, title: convTitle, retrieved, tag: prev?.tag ?? null },
+      );
+      const art = extractArtifact(acc);
+      if (art) setArtifact(art);
       loadConvos();
-    } catch (e: any) {
-      const msg = typeof e?.message === "string" && e.message.length < 200 ? e.message : "Could not reach the coach.";
-      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${msg}` }]);
+    } catch (e: unknown) {
+      const msg = e instanceof Error && e.message.length < 200 ? e.message : "Could not reach the coach.";
+      setMessages((m) => {
+        // Replace a half-streamed bubble with the error, or append one.
+        const copy = m.slice();
+        const errLine = `⚠️ ${msg}`;
+        if (started && copy.length && copy[copy.length - 1].role === "assistant") {
+          copy[copy.length - 1] = { ...copy[copy.length - 1], content: acc ? `${acc}\n\n${errLine}` : errLine };
+          return copy;
+        }
+        return [...copy, { role: "assistant", content: errLine }];
+      });
     } finally {
       setLoading(false);
     }
   }
 
+  const activeConvo = conversations.find((c) => c.id === activeId);
+
   return (
-    <div className="chat-shell">
-      {/* Sidebar: projects → chats within the open project */}
-      <aside className="chat-side" style={{ width: 270 }}>
-        <div className="card" style={{ padding: 14 }}>
-          <div className="card-label">Projects</div>
-          {projects.map((p) => (
-            <div
-              key={p.id}
-              onClick={() => setActiveProject(p.id)}
-              className="knowledge-item"
-              style={{ cursor: "pointer", marginBottom: 4, background: activeProject === p.id ? "var(--blue-pale)" : "var(--surface)", display: "flex", gap: 6 }}
-            >
-              <span>📁</span>
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: activeProject === p.id ? 700 : 500 }}>{p.name}</span>
-              <span className="muted" style={{ fontSize: 10 }}>{p.n_docs}📄</span>
+    <div className="app-main">
+      {/* Top bar */}
+      <header className="topbar">
+        <div className="flex items-center gap-3">
+          <h2 className="text-headline-md font-semibold text-primary">
+            {activeConvo ? activeConvo.title : project ? `${project.name}` : "AI Coaching Portal"}
+          </h2>
+          {activeConvo && (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-surface-container-low border border-surface-container-high">
+              <span className="w-2 h-2 rounded-full bg-pulse-teal-vibrant animate-pulse" />
+              <span className="text-label-sm text-on-surface-variant">Active Session</span>
             </div>
-          ))}
-          {projects.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Create a project to start.</div>}
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <input className="select" style={{ flex: 1, fontSize: 12 }} placeholder="New project…" value={newProj}
-              onChange={(e) => setNewProj(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addProject()} />
-            <button className="btn" style={{ height: 36, padding: "0 12px" }} onClick={addProject}>+</button>
-          </div>
+          )}
         </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowManage((s) => !s)}
+            className={`text-label-sm px-3 py-1.5 rounded-lg border transition-colors ${showManage ? "border-primary-container bg-primary-fixed/30 text-primary" : "border-outline-variant text-on-surface-variant hover:bg-surface-container"}`}
+          >
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>folder_managed</span>
+              Manage
+            </span>
+          </button>
+        </div>
+      </header>
 
-        {project && (
-          <>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button className="btn" style={{ height: 36, flex: 1 }} onClick={newChat}>+ New chat</button>
-              <button
-                className="nav-link"
-                style={{ background: "var(--white)", border: "0.5px solid var(--border-mid)", borderRadius: 8, padding: "0 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: showManage ? "var(--blue)" : "var(--ink-3)" }}
-                onClick={() => setShowManage((s) => !s)}
-              >
-                Manage
-              </button>
-            </div>
-            <div className="card-label" style={{ marginTop: 4 }}>Chats in {project.name}</div>
-            <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-              {projectConvos.map((c) => (
-                <div key={c.id} onClick={() => openConversation(c.id)} className="knowledge-item"
-                  style={{ cursor: "pointer", marginBottom: 0, background: c.id === activeId ? "var(--blue-pale)" : "var(--surface)", display: "flex", gap: 6 }}>
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</span>
-                  <span onClick={async (e) => { e.stopPropagation(); await deleteConversation(c.id); if (c.id === activeId) newChat(); loadConvos(); }}
-                    style={{ color: "var(--ink-3)", fontSize: 14 }}>×</span>
-                </div>
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left sidebar: projects + threads */}
+        <aside className="w-[260px] shrink-0 border-r border-surface-container-high bg-surface-container-lowest flex flex-col overflow-hidden">
+          {/* Projects */}
+          <div className="p-4 border-b border-surface-container-high">
+            <div className="card-label">Projects</div>
+            <div className="flex flex-col gap-1">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setActiveProject(p.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-body-sm text-left w-full transition-colors ${activeProject === p.id ? "bg-primary-fixed/40 text-primary font-semibold" : "text-on-surface hover:bg-surface-container"}`}
+                >
+                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 16 }}>folder</span>
+                  <span className="flex-1 truncate">{p.name}</span>
+                  <span className="text-label-caps text-on-surface-variant">{p.n_docs}</span>
+                </button>
               ))}
-              {projectConvos.length === 0 && <div className="muted" style={{ fontSize: 12 }}>No chats yet — start one.</div>}
             </div>
-          </>
-        )}
-      </aside>
-
-      {/* Main */}
-      <div className="chat-main">
-        {!project ? (
-          <div className="chat-log" style={{ alignItems: "center", justifyContent: "center" }}>
-            <div className="muted" style={{ textAlign: "center" }}>Create or select a project to start chatting.</div>
+            <div className="flex gap-2 mt-3">
+              <input
+                className="input-field flex-1 text-body-sm"
+                style={{ padding: "6px 10px" }}
+                placeholder="New project…"
+                value={newProj}
+                onChange={(e) => setNewProj(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addProject()}
+              />
+              <button className="btn" style={{ height: 34, padding: "0 12px", fontSize: 18 }} onClick={addProject}>+</button>
+            </div>
           </div>
-        ) : (
-          <>
-            <div style={{ padding: "10px 16px", borderBottom: "0.5px solid var(--border)", background: "var(--blue-pale)", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, color: "var(--blue)", fontSize: 13 }}>📁 {project.name}</span>
-              <span className="muted" style={{ fontSize: 11 }}>the coach uses this project&apos;s files & imported folders</span>
-              <span style={{ marginLeft: "auto", color: "var(--coral)", fontSize: 11, cursor: "pointer" }}
-                onClick={async () => { if (confirm(`Delete project "${project.name}"?`)) { await deleteProject(project.id); const ps = await listProjects(); setProjects(ps); setActiveProject(ps[0]?.id ?? null); } }}>
-                Delete
-              </span>
-            </div>
-            <div className="chat-log" ref={logRef}>
-              {messages.length === 0 && <div className="muted" style={{ margin: "auto", textAlign: "center" }}>Chatting in “{project.name}”. Ask Pulse anything.</div>}
-              {messages.map((m, i) => (
-                <div key={i} className={`bubble ${m.role === "user" ? "user" : "coach"} ${m.handoff ? "handoff" : ""}`}>
-                  {m.handoff && <div style={{ marginBottom: 6 }}><span className="chip handoff">Human handoff</span></div>}
-                  {m.role === "assistant" ? (
-                    <MessageContent content={m.content} onOpenArtifact={(html, title) => setArtifact({ html, title })} />
-                  ) : (
-                    m.content
-                  )}
-                </div>
-              ))}
-              {loading && <div className="bubble coach muted">Coaching…</div>}
-            </div>
-            {files.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 16px 8px" }}>
-                {files.map((f, i) => (
-                  <span key={i} className="chip" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>📎 {f.name}
-                    <span style={{ cursor: "pointer" }} onClick={() => setFiles((fs) => fs.filter((_, j) => j !== i))}>×</span></span>
-                ))}
-              </div>
-            )}
-            <div className="chat-input-row">
-              <input ref={fileRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
-                onChange={(e) => { setFiles((fs) => [...fs, ...Array.from(e.target.files || [])]); if (fileRef.current) fileRef.current.value = ""; }} />
-              <button className="btn" style={{ background: "var(--surface)", color: "var(--blue)", border: "0.5px solid var(--border-mid)", padding: "0 14px" }} onClick={() => fileRef.current?.click()} title="Attach image or PDF">📎</button>
-              <textarea className="chat-input" rows={1} placeholder="Message Pulse…" value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} />
-              <button className="btn" onClick={submit} disabled={loading || (!input.trim() && files.length === 0)}>Send</button>
-            </div>
-          </>
-        )}
-      </div>
 
-      {/* Right rail */}
-      <aside className="chat-side" style={{ width: 270 }}>
-        {project && showManage && (
-          <>
-            <KnowledgePanel
-              title="Project files"
-              hint="Files only this project's chats use."
-              load={() => listProjectDocs(project.id)}
-              upload={(fs) => uploadProjectDocs(project.id, fs).then((r) => { loadProjects(); return r; })}
-              remove={(id) => deleteProjectDoc(project.id, id).then((r) => { loadProjects(); return r; })}
-            />
-            <div className="card">
-              <div className="card-label">Imported team folders</div>
-              {pf?.imported.length === 0 && <div className="muted" style={{ fontSize: 12 }}>None imported.</div>}
-              {pf?.imported.map((f) => (
-                <div key={f.id} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "0.5px solid var(--border)", alignItems: "center" }}>
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>📚 {f.name}</span>
-                  <span className="muted" style={{ fontSize: 11 }}>{f.n_docs}📄</span>
-                  <span style={{ color: "var(--coral)", cursor: "pointer", fontSize: 12 }}
-                    onClick={async () => { await unimportFolder(project.id, f.id); loadFolders(); }}>remove</span>
-                </div>
-              ))}
-              {pf && pf.available.length > 0 && (
-                <>
-                  <div className="card-label" style={{ marginTop: 12 }}>Available to import</div>
-                  {pf.available.map((f) => (
-                    <div key={f.id} style={{ display: "flex", gap: 8, padding: "6px 0", alignItems: "center" }}>
-                      <span style={{ flex: 1, fontSize: 13 }}>📚 {f.name}</span>
-                      <button className="btn" style={{ height: 28, padding: "0 10px", fontSize: 12 }}
-                        onClick={async () => { await importFolder(project.id, f.id); loadFolders(); }}>Import</button>
+          {/* Threads */}
+          {project && (
+            <div className="flex-1 overflow-y-auto p-3">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <div className="card-label mb-0">Active Threads</div>
+                <button onClick={newChat} className="text-label-sm text-primary hover:underline">+ New</button>
+              </div>
+              <div className="flex flex-col gap-1">
+                {projectConvos.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => openConversation(c.id)}
+                    className={`sidebar-thread ${c.id === activeId ? "active" : ""}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, marginTop: 2 }}>chat_bubble</span>
+                    <span className="flex-1 truncate">{c.title}</span>
+                    <span
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await deleteConversation(c.id);
+                        if (c.id === activeId) newChat();
+                        loadConvos();
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error text-sm cursor-pointer"
+                      style={{ fontSize: 14 }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+                {projectConvos.length === 0 && (
+                  <div className="muted text-center py-4">No chats yet</div>
+                )}
+              </div>
+            </div>
+          )}
+        </aside>
+
+        {/* Main chat area */}
+        <div className="flex-1 flex flex-col overflow-hidden relative bg-surface">
+          {!project ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <span className="material-symbols-outlined text-on-surface-variant mb-3" style={{ fontSize: 48 }}>folder_open</span>
+                <div className="muted">Create or select a project to start chatting.</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Messages */}
+              <div ref={scrollRef} className="chat-scroll relative">
+                {messages.length === 0 && (
+                  <div className="m-auto text-center">
+                    <span className="material-symbols-outlined text-on-surface-variant mb-2" style={{ fontSize: 40 }}>robot_2</span>
+                    <div className="muted">Ask Pulse anything about {project.name}.</div>
+                  </div>
+                )}
+
+                {messages.map((m, i) => (
+                  <div key={i} className={m.role === "user" ? "bubble-user" : "bubble-coach"}>
+                    <div className="bubble-meta">
+                      {m.role === "user" ? (
+                        <>
+                          <div className="bubble-avatar bg-primary-container text-on-primary ml-auto">ME</div>
+                          <span className="text-label-sm text-on-surface-variant">You</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="bubble-avatar bg-secondary-container text-on-secondary-container">
+                            <span className="material-symbols-outlined icon-fill" style={{ fontSize: 14 }}>robot_2</span>
+                          </div>
+                          <span className="text-label-sm font-semibold text-primary">AI Coach</span>
+                        </>
+                      )}
+                    </div>
+                    <div className={`bubble-body ${m.handoff ? "handoff" : ""}`}>
+                      {m.handoff && (
+                        <div className="mb-3">
+                          <span className="inline-flex items-center gap-1.5 bg-error-container/30 text-error border border-error/20 px-3 py-1.5 rounded-full text-label-sm font-semibold">
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>record_voice_over</span>
+                            Human Handoff Recommended
+                          </span>
+                        </div>
+                      )}
+                      {m.role === "assistant" ? (
+                        <MessageContent content={m.content} onOpenArtifact={(html, title) => setArtifact({ html, title })} />
+                      ) : (
+                        m.content
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {loading && (
+                  <div className="bubble-coach">
+                    <div className="bubble-meta">
+                      <div className="bubble-avatar bg-secondary-container text-on-secondary-container">
+                        <span className="material-symbols-outlined icon-fill" style={{ fontSize: 14 }}>robot_2</span>
+                      </div>
+                      <span className="text-label-sm font-semibold text-primary">AI Coach</span>
+                    </div>
+                    <div className="bubble-body">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <div className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Attached files preview */}
+              {files.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-8 pb-2">
+                  {files.map((f, i) => (
+                    <div key={i} className="flex items-center gap-2 bg-surface-container-low border border-surface-container-high px-3 py-1.5 rounded-lg text-label-sm">
+                      <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 16 }}>picture_as_pdf</span>
+                      <span>{f.name}</span>
+                      <button onClick={() => setFiles((fs) => fs.filter((_, j) => j !== i))} className="text-on-surface-variant hover:text-error ml-1">×</button>
                     </div>
                   ))}
-                </>
+                </div>
               )}
-              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-                Need a folder you don&apos;t have? Request access on the <strong>Team Knowledge</strong> page.
+
+              {/* Input */}
+              <div className="chat-input-wrap">
+                <div className="max-w-4xl mx-auto">
+                  <div className="chat-input-box">
+                    <input ref={fileRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                      onChange={(e) => { setFiles((fs) => [...fs, ...Array.from(e.target.files || [])]); if (fileRef.current) fileRef.current.value = ""; }} />
+                    <button
+                      className="p-2 text-outline hover:text-primary hover:bg-surface-container rounded-lg transition-colors shrink-0"
+                      onClick={() => fileRef.current?.click()}
+                      title="Attach file"
+                    >
+                      <span className="material-symbols-outlined">attach_file</span>
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      className="chat-input"
+                      rows={1}
+                      placeholder="Ask the AI Coach…"
+                      value={input}
+                      onChange={(e) => {
+                        setInput(e.target.value);
+                        e.target.style.height = "";
+                        e.target.style.height = e.target.scrollHeight + "px";
+                      }}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+                    />
+                    <div className="flex items-center gap-1 shrink-0 p-1">
+                      <button
+                        className="chat-send-btn"
+                        onClick={submit}
+                        disabled={loading || (!input.trim() && files.length === 0)}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>send</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-center mt-2 text-label-sm text-outline">
+                    AI responses may contain inaccuracies — verify critical decisions.
+                  </p>
+                </div>
               </div>
-            </div>
-          </>
-        )}
-        {!showManage && lastReply?.tag && (
-          <div className="card">
-            <div className="card-label">How this turn was measured</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <span className="chip phase">{lastReply.tag.phase}</span>
-              <span className="chip">{lastReply.tag.usage_type}</span>
-            </div>
-            {lastReply.tag.fired_signals && lastReply.tag.fired_signals.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>Signals observed</div>
-                {lastReply.tag.fired_signals.map((s) => (
-                  <div key={s.id} style={{ marginBottom: 8 }}>
-                    <span title={s.text} style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background: s.polarity > 0 ? "var(--teal-pale)" : "var(--coral-pale)", color: s.polarity > 0 ? "#0f6e56" : "var(--coral)" }}>
-                      {s.polarity > 0 ? "+" : "−"} {s.pillar}
-                    </span>
-                    {s.evidence && <div className="muted" style={{ fontSize: 11.5, marginTop: 3, fontStyle: "italic" }}>“{s.evidence}” — {s.text}</div>}
+            </>
+          )}
+        </div>
+
+        {/* Right rail: manage panel or knowledge signals */}
+        <aside className="w-[280px] shrink-0 border-l border-surface-container-high bg-surface-container-lowest overflow-y-auto p-4 flex flex-col gap-4">
+          {project && showManage ? (
+            <>
+              <KnowledgePanel
+                title="Project files"
+                hint="Files only this project's chats use."
+                load={() => listProjectDocs(project.id)}
+                upload={(fs) => uploadProjectDocs(project.id, fs).then((r) => { loadProjects(); return r; })}
+                remove={(id) => deleteProjectDoc(project.id, id).then((r) => { loadProjects(); return r; })}
+              />
+              <div className="card">
+                <div className="card-label">Imported team folders</div>
+                {pf?.imported.length === 0 && <div className="muted">None imported.</div>}
+                {pf?.imported.map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 py-2 border-b border-surface-container text-body-sm">
+                    <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: 16 }}>library_books</span>
+                    <span className="flex-1 font-semibold truncate">{f.name}</span>
+                    <span className="text-label-caps text-on-surface-variant">{f.n_docs}</span>
+                    <button onClick={async () => { await unimportFolder(project.id, f.id); loadFolders(); }} className="text-error text-label-sm hover:underline ml-1">remove</button>
                   </div>
                 ))}
+                {pf && pf.available.length > 0 && (
+                  <>
+                    <div className="card-label mt-3">Available to import</div>
+                    {pf.available.map((f) => (
+                      <div key={f.id} className="flex items-center gap-2 py-1 text-body-sm">
+                        <span className="flex-1 truncate">{f.name}</span>
+                        <button className="btn" style={{ height: 28, padding: "0 10px", fontSize: 12 }} onClick={async () => { await importFolder(project.id, f.id); loadFolders(); }}>Import</button>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
-            )}
-          </div>
-        )}
-        {!showManage && (
-          <div className="card">
-            <div className="card-label">Knowledge retrieved</div>
-            {!lastReply?.retrieved?.length && <div className="muted">Knowledge used to ground the reply appears here.</div>}
-            {(() => {
-              // Collapse multiple chunks from the same document into one row (best match + count).
-              const byDoc = new Map<string, { source: string; scope?: string; similarity: number; n: number }>();
-              for (const c of lastReply?.retrieved || []) {
-                const key = `${c.source}|${c.scope}`;
-                const prev = byDoc.get(key);
-                if (!prev) byDoc.set(key, { source: c.source || "knowledge", scope: c.scope, similarity: c.similarity, n: 1 });
-                else {
-                  prev.n += 1;
-                  prev.similarity = Math.max(prev.similarity, c.similarity);
-                }
-              }
-              return Array.from(byDoc.values()).map((c, i) => (
-                <div className="knowledge-item" key={i}>
-                  <span className="kf">{c.source}</span>
-                  <div className="ks">
-                    <span style={{ textTransform: "uppercase", fontWeight: 700, fontSize: 9, letterSpacing: "0.05em", color: c.scope === "user" ? "var(--purple)" : c.scope === "team" ? "var(--teal)" : "var(--blue-mid)" }}>
-                      {c.scope === "user" ? "project" : c.scope || "org"}
-                    </span>{" "}· match {(c.similarity * 100).toFixed(0)}%
-                    {c.n > 1 && <span className="muted"> · {c.n} passages</span>}
+              <div className="card">
+                <div className="card-label">Danger zone</div>
+                <button
+                  className="btn-outline text-error border-error/30 hover:bg-error-container/20 text-label-sm w-full"
+                  style={{ height: 36 }}
+                  onClick={async () => {
+                    if (confirm(`Delete project "${project.name}"?`)) {
+                      await deleteProject(project.id);
+                      const ps = await listProjects();
+                      setProjects(ps);
+                      setActiveProject(ps[0]?.id ?? null);
+                    }
+                  }}
+                >
+                  Delete project
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {lastReply?.tag && (
+                <div className="card">
+                  <div className="card-label">Turn measurement</div>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <span className="chip phase">{lastReply.tag.phase}</span>
+                    <span className="chip">{lastReply.tag.usage_type}</span>
                   </div>
+                  {(lastReply.tag.fired_signals?.length ?? 0) > 0 && (
+                    <div>
+                      <div className="card-label mt-2">Signals observed</div>
+                      {(lastReply.tag.fired_signals ?? []).map((s: { id: string; polarity: number; pillar: string; evidence?: string; text: string }) => (
+                        <div key={s.id} className="mb-2">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-label-sm font-semibold ${s.polarity > 0 ? "bg-secondary-container/30 text-on-secondary-container" : "bg-error-container/30 text-error"}`}>
+                            {s.polarity > 0 ? "▲" : "▼"} {s.pillar}
+                          </span>
+                          {s.evidence && <div className="muted mt-1 italic">"{s.evidence}"</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ));
-            })()}
-          </div>
-        )}
-      </aside>
+              )}
+              <div className="card">
+                <div className="card-label">Knowledge retrieved</div>
+                {!lastReply?.retrieved?.length && <div className="muted">Sources used will appear here.</div>}
+                {(() => {
+                  const byDoc = new Map<string, { source: string; scope?: string; similarity: number; n: number }>();
+                  for (const c of lastReply?.retrieved || []) {
+                    const key = `${c.source}|${c.scope}`;
+                    const prev = byDoc.get(key);
+                    if (!prev) byDoc.set(key, { source: c.source || "knowledge", scope: c.scope, similarity: c.similarity, n: 1 });
+                    else { prev.n++; prev.similarity = Math.max(prev.similarity, c.similarity); }
+                  }
+                  return Array.from(byDoc.values()).map((c, i) => (
+                    <div className="knowledge-item" key={i}>
+                      <div className="kf truncate">{c.source}</div>
+                      <div className="ks">
+                        <span className={`uppercase font-bold text-[9px] tracking-wider ${c.scope === "user" ? "text-purple-600" : c.scope === "team" ? "text-secondary" : "text-primary"}`}>
+                          {c.scope === "user" ? "project" : c.scope || "org"}
+                        </span>
+                        {" · "}{(c.similarity * 100).toFixed(0)}% match
+                        {c.n > 1 && <span className="muted"> · {c.n} passages</span>}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
 
       <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
     </div>

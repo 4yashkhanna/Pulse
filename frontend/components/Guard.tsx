@@ -28,6 +28,6 @@ export default function Guard({
     }
   }, [user, loading, role, router]);
 
-  if (loading || !user) return <div className="page muted">Loading…</div>;
+  if (loading || !user) return <div className="app-main flex items-center justify-center muted">Loading…</div>;
   return <>{children}</>;
 }

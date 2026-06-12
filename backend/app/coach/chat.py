@@ -1,11 +1,18 @@
-"""Coach pipeline (org-scoped): retrieve → prompt → generate → persist → tag."""
+"""Coach pipeline (org-scoped): retrieve → prompt → generate → persist → tag.
+
+Two entry points share the same preparation:
+- run_turn        — blocking; returns the full reply (legacy /chat endpoint)
+- run_turn_stream — generator of SSE-ready events; the reply streams token by token,
+                    then the turn is persisted and tagged (the tag arrives as a final event)
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterator
 
 from ..config import get_settings
 from ..db import get_conn
-from ..llm import generate
+from ..llm import generate, generate_stream
 from ..rag.retrieve import Chunk, retrieve
 from . import tagging
 from .prompts import build_system_prompt
@@ -18,6 +25,17 @@ class CoachResult:
     title: str
     chunks: list[Chunk]
     tag: dict | None
+
+
+@dataclass
+class PreparedTurn:
+    text: str
+    attach_note: str
+    conversation_id: str
+    title: str
+    history: list[dict]
+    chunks: list[Chunk]
+    system_prompt: str
 
 
 def _org_config(conn, org_id: str) -> dict:
@@ -45,18 +63,17 @@ def _format_history(history: list[dict], new_message: str) -> str:
     return "\n".join(lines)
 
 
-def run_turn(
+def _prepare_turn(
     *,
     message: str,
     org_id: str,
     user_id: str,
     conversation_id: str | None,
-    team_id: str | None = None,
-    project_id: str | None = None,
-    attachments: list[tuple[str, bytes, str]] | None = None,
-) -> CoachResult:
-    settings = get_settings()
-    attachments = attachments or []
+    team_id: str | None,
+    project_id: str | None,
+    attachments: list[tuple[str, bytes, str]],
+) -> PreparedTurn:
+    """Everything before generation: org config, history, conversation row, retrieval."""
     attach_note = (
         "\n\n[attached: " + ", ".join(name for _, _, name in attachments) + "]"
         if attachments
@@ -65,7 +82,6 @@ def run_turn(
     # What we embed/tag/store as the user's text. If they sent only files, use a placeholder.
     text = message.strip() or "(see attached file)"
 
-    # Fetch org config + history, create conversation if needed.
     with get_conn() as conn:
         cfg = _org_config(conn, org_id)
         if conversation_id:
@@ -113,44 +129,131 @@ def run_turn(
         maturity_label=cfg.get("maturity_label"),
         coach_prompt=cfg.get("coach_prompt"),
     )
-    reply = generate(
-        system_prompt,
-        _format_history(history, text),
-        attachments=[(mime, data) for mime, data, _ in attachments],
+    return PreparedTurn(
+        text=text,
+        attach_note=attach_note,
+        conversation_id=conversation_id,
+        title=title,
+        history=history,
+        chunks=chunks,
+        system_prompt=system_prompt,
     )
 
-    # Persist both messages, bump conversation timestamp.
+
+def _persist_turn(prep: PreparedTurn, message: str, reply: str) -> str:
+    """Store both messages, bump the conversation timestamp; returns the user message id."""
     with get_conn() as conn:
         user_msg = conn.execute(
             "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'user',%s) RETURNING id",
-            (conversation_id, message + attach_note),
+            (prep.conversation_id, message + prep.attach_note),
         ).fetchone()
         conn.execute(
             "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
-            (conversation_id, reply),
+            (prep.conversation_id, reply),
         )
         conn.execute(
-            "UPDATE conversations SET updated_at = now() WHERE id = %s", (conversation_id,)
+            "UPDATE conversations SET updated_at = now() WHERE id = %s", (prep.conversation_id,)
         )
         conn.commit()
-        user_msg_id = str(user_msg["id"])
+        return str(user_msg["id"])
 
-    # Passive tagging (synchronous in demo mode). Never let a tagging failure
-    # (e.g. a rate limit) break the user's reply — the message is already saved.
+
+def _tag_turn(prep: PreparedTurn, *, org_id: str, user_id: str, user_msg_id: str, reply: str) -> dict | None:
+    """Passive tagging. Never let a tagging failure (e.g. a rate limit) break the
+    user's reply — the message is already saved."""
+    try:
+        return tagging.tag_and_store(
+            org_id=org_id,
+            user_id=user_id,
+            conversation_id=prep.conversation_id,
+            message_id=user_msg_id,
+            user_message=prep.text,
+            coach_reply=reply,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def run_turn(
+    *,
+    message: str,
+    org_id: str,
+    user_id: str,
+    conversation_id: str | None,
+    team_id: str | None = None,
+    project_id: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> CoachResult:
+    settings = get_settings()
+    attachments = attachments or []
+    prep = _prepare_turn(
+        message=message, org_id=org_id, user_id=user_id, conversation_id=conversation_id,
+        team_id=team_id, project_id=project_id, attachments=attachments,
+    )
+    reply = generate(
+        prep.system_prompt,
+        _format_history(prep.history, prep.text),
+        attachments=[(mime, data) for mime, data, _ in attachments],
+    )
+    user_msg_id = _persist_turn(prep, message, reply)
+
     tag = None
     if settings.synchronous_tagging:
-        try:
-            tag = tagging.tag_and_store(
-                org_id=org_id,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                message_id=user_msg_id,
-                user_message=text,
-                coach_reply=reply,
-            )
-        except Exception:  # noqa: BLE001
-            tag = None
+        tag = _tag_turn(prep, org_id=org_id, user_id=user_id, user_msg_id=user_msg_id, reply=reply)
 
     return CoachResult(
-        reply=reply, conversation_id=conversation_id, title=title, chunks=chunks, tag=tag
+        reply=reply, conversation_id=prep.conversation_id, title=prep.title,
+        chunks=prep.chunks, tag=tag,
     )
+
+
+def run_turn_stream(
+    *,
+    message: str,
+    org_id: str,
+    user_id: str,
+    conversation_id: str | None,
+    team_id: str | None = None,
+    project_id: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> Iterator[dict]:
+    """Yields events for the SSE endpoint:
+    {"type":"meta", conversation_id, title, retrieved}   — once, immediately
+    {"type":"delta", "text": ...}                        — per token batch
+    {"type":"done"}                                      — reply persisted
+    {"type":"tag", "tag": {...}}                         — fired signals (after the reply)
+    """
+    settings = get_settings()
+    attachments = attachments or []
+    prep = _prepare_turn(
+        message=message, org_id=org_id, user_id=user_id, conversation_id=conversation_id,
+        team_id=team_id, project_id=project_id, attachments=attachments,
+    )
+    yield {
+        "type": "meta",
+        "conversation_id": prep.conversation_id,
+        "title": prep.title,
+        "retrieved": [
+            {"source": c.source, "scope": c.scope, "similarity": round(c.similarity, 3)}
+            for c in prep.chunks
+        ],
+    }
+
+    parts: list[str] = []
+    for delta in generate_stream(
+        prep.system_prompt,
+        _format_history(prep.history, prep.text),
+        attachments=[(mime, data) for mime, data, _ in attachments],
+    ):
+        parts.append(delta)
+        yield {"type": "delta", "text": delta}
+
+    reply = "".join(parts).strip()
+    user_msg_id = _persist_turn(prep, message, reply)
+    yield {"type": "done"}
+
+    # The user already has the full reply on screen — tagging cost is now invisible.
+    if settings.synchronous_tagging:
+        tag = _tag_turn(prep, org_id=org_id, user_id=user_id, user_msg_id=user_msg_id, reply=reply)
+        if tag:
+            yield {"type": "tag", "tag": tag}

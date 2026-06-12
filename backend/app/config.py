@@ -25,6 +25,7 @@ USAGE_TYPES = ["ideation", "poc-scoping", "evidence-check", "synthesis", "refram
 
 class Settings:
     def __init__(self) -> None:
+        self.env: str = os.getenv("PULSE_ENV", "dev").lower()  # dev | prod
         self.database_url: str = os.getenv(
             "DATABASE_URL", "postgresql://pulse:pulse@localhost:5432/pulse"
         )
@@ -34,6 +35,9 @@ class Settings:
         self.chat_model: str = os.getenv("CHAT_MODEL", "gemini-3.5-flash")
         self.tag_model: str = os.getenv("TAG_MODEL", "gemini-3.5-flash")
         self.embed_dim: int = 768
+        # Chunks below this cosine similarity are dropped from the coach's context
+        # rather than injected as irrelevant "knowledge".
+        self.min_similarity: float = float(os.getenv("MIN_SIMILARITY", "0.30"))
         self.synchronous_tagging: bool = (
             os.getenv("SYNCHRONOUS_TAGGING", "true").lower() == "true"
         )
@@ -42,6 +46,10 @@ class Settings:
         # Auth
         self.jwt_secret: str = os.getenv("JWT_SECRET", "dev-secret-change-me")
         self.jwt_ttl_hours: int = int(os.getenv("JWT_TTL_HOURS", "24"))
+        if self.env == "prod" and self.jwt_secret == "dev-secret-change-me":
+            raise RuntimeError(
+                "JWT_SECRET must be set to a strong random value when PULSE_ENV=prod."
+            )
 
         # Azure (production) — read but unused in the prototype.
         self.azure_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")

@@ -6,6 +6,7 @@ dashboard visibility settings.
 from __future__ import annotations
 
 import json
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
@@ -39,7 +40,9 @@ class OrgUpdate(BaseModel):
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
-    password: str
+    # When omitted, a unique temporary password is generated and returned once
+    # in the response — no more shared default credentials.
+    password: str | None = None
     role: str = "employee"  # employee | manager
     team_id: str | None = None
 
@@ -194,6 +197,7 @@ def list_users(org_id: str):
 def create_user(org_id: str, body: UserCreate):
     if body.role not in ("employee", "manager"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "role must be employee or manager")
+    password = body.password or secrets.token_urlsafe(9)
     with get_conn() as conn:
         existing = conn.execute("SELECT 1 FROM users WHERE email = %s", (body.email.lower(),)).fetchone()
         if existing:
@@ -206,7 +210,7 @@ def create_user(org_id: str, body: UserCreate):
             (
                 org_id,
                 body.email.lower(),
-                hash_password(body.password),
+                hash_password(password),
                 body.name,
                 body.role,
                 body.team_id,
@@ -219,4 +223,7 @@ def create_user(org_id: str, body: UserCreate):
                 (str(r["id"]), body.team_id, org_id),
             )
         conn.commit()
-    return {"id": str(r["id"]), "email": body.email.lower(), "role": body.role}
+    out = {"id": str(r["id"]), "email": body.email.lower(), "role": body.role}
+    if not body.password:
+        out["temp_password"] = password
+    return out

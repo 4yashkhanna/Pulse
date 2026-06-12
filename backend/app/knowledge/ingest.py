@@ -2,28 +2,28 @@
 
 A document belongs to a scope: 'org' (KPMG admin, whole org), 'team' (manager, a team),
 or 'user' (personal/project knowledge). Retrieval merges all three for the caller.
+
+Uploads return immediately: the document row is created with status 'processing' and
+the parse → chunk → embed work runs on a small background worker pool. Clients poll
+the document list until everything is 'ready' (the status chips already exist in the UI).
 """
 from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
 
 from ..db import get_conn, to_pgvector
 from ..rag.embed import embed_documents
 from .chunk import chunk_text
 from .parse import extract_text
 
+# Two workers: embedding is the bottleneck and the free Gemini tier rate-limits anyway.
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingest")
 
-def ingest_document(
-    *,
-    org_id: str,
-    scope: str,
-    scope_id: str,
-    filename: str,
-    mime: str | None,
-    data: bytes,
-    uploaded_by: str | None,
-    project_id: str | None = None,
-    folder_id: str | None = None,
-) -> dict:
-    """Process one uploaded file into the given scope (project or folder optional)."""
+
+def _create_row(
+    *, org_id: str, scope: str, scope_id: str, project_id: str | None,
+    folder_id: str | None, filename: str, mime: str | None, uploaded_by: str | None,
+) -> str:
     with get_conn() as conn:
         doc = conn.execute(
             """
@@ -33,14 +33,19 @@ def ingest_document(
             (org_id, scope, scope_id, project_id, folder_id, filename, mime, uploaded_by),
         ).fetchone()
         conn.commit()
-        document_id = str(doc["id"])
+        return str(doc["id"])
 
+
+def _process(
+    document_id: str, *, org_id: str, scope: str, scope_id: str,
+    project_id: str | None, folder_id: str | None, filename: str, data: bytes,
+) -> None:
     try:
         text = extract_text(filename, data)
         chunks = chunk_text(text)
         if not chunks:
             _mark(document_id, "error", 0, "No extractable text found")
-            return {"document_id": document_id, "n_chunks": 0, "status": "error", "filename": filename}
+            return
 
         embeddings = embed_documents(chunks)
         with get_conn() as conn:
@@ -56,10 +61,33 @@ def ingest_document(
                     )
             conn.commit()
         _mark(document_id, "ready", len(chunks), None)
-        return {"document_id": document_id, "n_chunks": len(chunks), "status": "ready", "filename": filename}
     except Exception as exc:  # noqa: BLE001
         _mark(document_id, "error", 0, str(exc)[:500])
-        return {"document_id": document_id, "n_chunks": 0, "status": "error", "error": str(exc), "filename": filename}
+
+
+def ingest_document(
+    *,
+    org_id: str,
+    scope: str,
+    scope_id: str,
+    filename: str,
+    mime: str | None,
+    data: bytes,
+    uploaded_by: str | None,
+    project_id: str | None = None,
+    folder_id: str | None = None,
+) -> dict:
+    """Create the tracking row and schedule processing; returns immediately."""
+    document_id = _create_row(
+        org_id=org_id, scope=scope, scope_id=scope_id, project_id=project_id,
+        folder_id=folder_id, filename=filename, mime=mime, uploaded_by=uploaded_by,
+    )
+    _executor.submit(
+        _process, document_id,
+        org_id=org_id, scope=scope, scope_id=scope_id, project_id=project_id,
+        folder_id=folder_id, filename=filename, data=data,
+    )
+    return {"document_id": document_id, "n_chunks": 0, "status": "processing", "filename": filename}
 
 
 def ingest_files(

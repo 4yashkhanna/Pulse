@@ -21,50 +21,65 @@ export default function LoginPage() {
       const user = await login(email, password);
       setUser(user);
       router.push(user.role === "kpmg_admin" ? "/admin" : "/chat");
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--blue)" }}>
-      <div style={{ width: 380 }}>
-        <div style={{ color: "#fff", fontSize: 34, fontWeight: 800, marginBottom: 4 }}>
-          Pulse<span style={{ color: "var(--teal)" }}>.</span>
+    <div className="min-h-screen flex items-center justify-center bg-primary">
+      <div style={{ width: 400 }}>
+        {/* Brand */}
+        <div className="mb-8 px-2">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-10 h-10 rounded bg-surface-container-lowest flex items-center justify-center">
+              <span className="material-symbols-outlined text-primary icon-fill" style={{ fontSize: 22 }}>analytics</span>
+            </div>
+            <div>
+              <div className="text-headline-md font-semibold text-on-primary">Pulse</div>
+              <div className="text-label-caps text-tertiary-fixed-dim">Design Intelligence Platform</div>
+            </div>
+          </div>
         </div>
-        <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginBottom: 24 }}>
-          KPMG · Design Excellence &amp; Quality
+
+        {/* Card */}
+        <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.15)" }}>
+          <div className="card-label mb-6">Sign in to your account</div>
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <label className="text-label-sm text-on-surface-variant mb-1 block">Email</label>
+              <input
+                className="input-field w-full"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-label-sm text-on-surface-variant mb-1 block">Password</label>
+              <input
+                className="input-field w-full"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && (
+              <div className="text-error text-body-sm bg-error-container/30 border border-error/20 px-3 py-2 rounded-lg">{error}</div>
+            )}
+            <button className="btn w-full" style={{ height: 44, marginTop: 8 }} disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
         </div>
-        <form onSubmit={submit} className="card" style={{ padding: 28 }}>
-          <div className="card-label">Sign in</div>
-          <input
-            className="chat-input"
-            style={{ width: "100%", marginBottom: 10 }}
-            placeholder="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <input
-            className="chat-input"
-            style={{ width: "100%", marginBottom: 14 }}
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          {error && (
-            <div style={{ color: "var(--coral)", fontSize: 13, marginBottom: 12 }}>{error}</div>
-          )}
-          <button className="btn" style={{ width: "100%", height: 44 }} disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
-        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 14, lineHeight: 1.7 }}>
+
+        <div className="text-center mt-5 text-label-sm px-2" style={{ color: "rgba(255,255,255,0.35)" }}>
           Demo accounts (pw: pulse1234) · admin@kpmg.com · maya@northwind.com · raj@northwind.com
         </div>
       </div>

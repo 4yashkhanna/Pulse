@@ -29,6 +29,14 @@ export default function KnowledgePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 
+  // Ingestion runs in the background — poll while any document is still processing.
+  useEffect(() => {
+    if (!docs.some((d) => d.status === "processing")) return;
+    const t = setTimeout(refresh, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs]);
+
   async function handle(files: FileList | null) {
     if (!files || !files.length) return;
     setBusy(true);

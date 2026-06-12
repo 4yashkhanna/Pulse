@@ -1,7 +1,10 @@
 """Chatbot routes — for org users (employee / manager). KPMG admins have no org."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from ..auth.security import CurrentUser, get_current_user
 from ..db import get_conn
@@ -93,6 +96,59 @@ async def chat(
         ],
         "tag": result.tag,
     }
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    message: str = Form(""),
+    conversation_id: str | None = Form(None),
+    project_id: str | None = Form(None),
+    files: list[UploadFile] = File(default=[]),
+    user: CurrentUser = Depends(require_org_user),
+):
+    """Streaming variant of /chat. Emits SSE lines: `data: {json}\\n\\n` with event
+    types meta / delta / done / tag / error (see chat.run_turn_stream)."""
+    with get_conn() as conn:
+        if conversation_id and not _owns(conn, conversation_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        if project_id and not _project_accessible(conn, project_id, user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No access to that project")
+
+    attachments: list[tuple[str, bytes, str]] = []
+    for f in files:
+        mime = f.content_type or ""
+        if mime not in ALLOWED_MIME:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported file type: {mime or f.filename}")
+        data = await f.read()
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{f.filename} exceeds 15 MB")
+        attachments.append((mime, data, f.filename or "file"))
+
+    if not message.strip() and not attachments:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Send a message or attach a file")
+
+    def event_source():
+        try:
+            for event in coach_chat.run_turn_stream(
+                message=message,
+                org_id=user.org_id,  # type: ignore[arg-type]
+                user_id=user.id,
+                team_id=user.team_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                attachments=attachments,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except RateLimited:
+            yield 'data: {"type":"error","detail":"The coach is rate-limited. Wait a few seconds and try again."}\n\n'
+        except Exception:  # noqa: BLE001
+            yield 'data: {"type":"error","detail":"Something went wrong generating the reply."}\n\n'
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/conversations")

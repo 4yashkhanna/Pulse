@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..config import get_settings
 from ..db import get_conn, to_pgvector
 from .embed import embed_query
 
@@ -33,7 +34,11 @@ def retrieve(
             "SELECT * FROM match_chunks(%s, %s, %s, %s, %s::vector, %s)",
             (org_id, team_id, project_id, folder_ids or [], to_pgvector(vec), k),
         ).fetchall()
+    # Drop weak matches: injecting barely-related chunks hurts the coach more than
+    # honestly saying nothing relevant was found.
+    min_sim = get_settings().min_similarity
     return [
         Chunk(content=r["content"], source=r["source"], scope=r["scope"], similarity=float(r["similarity"]))
         for r in rows
+        if float(r["similarity"]) >= min_sim
     ]

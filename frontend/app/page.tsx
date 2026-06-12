@@ -15,5 +15,5 @@ export default function Home() {
     else router.replace("/chat");
   }, [user, loading, router]);
 
-  return <div className="page muted">Loading…</div>;
+  return <div className="app-main flex items-center justify-center muted">Loading…</div>;
 }

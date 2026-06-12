@@ -20,7 +20,7 @@ app = FastAPI(title="Pulse — Design Intelligence Platform", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://localhost:3000"],
+    allow_origins=[settings.frontend_origin, "http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

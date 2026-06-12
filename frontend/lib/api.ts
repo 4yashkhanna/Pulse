@@ -158,6 +158,66 @@ export const sendMessage = (
   return req<ChatReply>("/chat", { method: "POST", body: fd });
 };
 
+// Streaming chat (SSE over fetch). Resolves when the stream ends; rejects on
+// HTTP errors or an in-stream {"type":"error"} event.
+export interface StreamCallbacks {
+  onMeta?: (meta: { conversation_id: string; title: string; retrieved: ChatReply["retrieved"] }) => void;
+  onDelta?: (text: string) => void;
+  onTag?: (tag: ChatReply["tag"]) => void;
+}
+export async function sendMessageStream(
+  message: string,
+  conversation_id: string | null | undefined,
+  files: File[] | undefined,
+  project_id: string | null | undefined,
+  cb: StreamCallbacks,
+): Promise<void> {
+  const fd = new FormData();
+  fd.append("message", message);
+  if (conversation_id) fd.append("conversation_id", conversation_id);
+  if (project_id) fd.append("project_id", project_id);
+  (files || []).forEach((f) => fd.append("files", f));
+
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const block of events) {
+      const line = block.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      let event: any;
+      try {
+        event = JSON.parse(line.slice(6));
+      } catch {
+        continue;
+      }
+      if (event.type === "meta") cb.onMeta?.(event);
+      else if (event.type === "delta") cb.onDelta?.(event.text);
+      else if (event.type === "tag") cb.onTag?.(event.tag);
+      else if (event.type === "error") throw new Error(event.detail || "Stream failed");
+    }
+  }
+}
+
 // --- projects (personal + team) ---
 export interface Project {
   id: string;

@@ -114,6 +114,42 @@ def generate(
     raise NotImplementedError(f"Generation for provider '{settings.llm_provider}' not wired yet.")
 
 
+def generate_stream(
+    system_prompt: str,
+    user_content: str,
+    *,
+    temperature: float = 0.6,
+    attachments: list[tuple[str, bytes]] | None = None,
+):
+    """Streaming variant of generate(): yields text deltas as they arrive.
+
+    Transient errors are retried only on the initial call (before any tokens have
+    been yielded); once streaming has begun a failure surfaces to the caller."""
+    settings = get_settings()
+    if settings.llm_provider == "gemini":
+        from google.genai import types
+
+        client = _gemini_client()
+        contents: list = [user_content]
+        for mime, data in attachments or []:
+            contents.append(types.Part.from_bytes(data=data, mime_type=mime))
+        stream = _with_retry(
+            lambda: client.models.generate_content_stream(
+                model=settings.chat_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=temperature,
+                ),
+            )
+        )
+        for event in stream:
+            if event.text:
+                yield event.text
+        return
+    raise NotImplementedError(f"Streaming for provider '{settings.llm_provider}' not wired yet.")
+
+
 def generate_json(system_prompt: str, user_content: str, schema: dict[str, Any]) -> dict[str, Any]:
     """Structured JSON generation used by passive tagging.
 

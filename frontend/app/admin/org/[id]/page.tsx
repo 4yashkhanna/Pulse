@@ -5,16 +5,22 @@ import { useParams, useRouter } from "next/navigation";
 import Guard from "@/components/Guard";
 import {
   KDoc,
+  KTemplate,
   Org,
   OrgUser,
   Team,
+  applyTemplate,
   createTeam,
   createUser,
   deleteDoc,
   getOrg,
+  grantSkill,
   listDocs,
   listTeams,
+  listTemplates,
   listUsers,
+  orgSkillGrants,
+  revokeSkill,
   updateOrg,
   uploadDocs,
 } from "@/lib/api";
@@ -297,6 +303,89 @@ function OverviewTab({ org }: { org: Org }) {
 // --------------------------------------------------------------------------- //
 // Knowledge
 // --------------------------------------------------------------------------- //
+function ApplyTemplatesPanel({ org, onApplied }: { org: Org; onApplied: () => void }) {
+  const [templates, setTemplates] = useState<KTemplate[]>([]);
+  const [stageId, setStageId] = useState("");
+  const [sectorId, setSectorId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string>("");
+
+  useEffect(() => {
+    listTemplates().then((ts) => {
+      setTemplates(ts);
+      // preselect the template matching the org's current stage
+      const match = ts.find((t) => t.kind === "stage" && t.key === `stage-${org.maturity_stage}`);
+      if (match) setStageId(match.id);
+    }).catch(() => {});
+  }, [org.maturity_stage]);
+
+  const stages = templates.filter((t) => t.kind === "stage");
+  const sectors = templates.filter((t) => t.kind === "sector");
+
+  async function apply() {
+    setBusy(true);
+    const lines: string[] = [];
+    try {
+      for (const tid of [stageId, sectorId].filter(Boolean)) {
+        const r = await applyTemplate(tid, org.id);
+        lines.push(
+          `${r.template}: ${r.copied.length} added${r.skipped.length ? `, ${r.skipped.length} already present` : ""}`,
+        );
+      }
+      setResult(lines.join(" · ") || "Nothing selected");
+      onApplied();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-surface-container-lowest border border-surface-variant rounded-lg shadow-ambient p-stack-md">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center text-secondary">
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>library_add</span>
+        </div>
+        <div>
+          <h4 className="text-headline-sm text-on-surface">Apply Knowledge Templates</h4>
+          <p className="text-on-surface-variant" style={{ fontSize: 12 }}>
+            Route premade stage & sector documents into this organization&apos;s RAG. Copies are instant and editable per-org.
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+        <select
+          className="flex-1 pl-3 pr-8 py-2 bg-surface-container-low border border-outline-variant rounded text-label-sm focus:outline-none focus:ring-1 focus:ring-pulse-teal-vibrant"
+          value={stageId}
+          onChange={(e) => setStageId(e.target.value)}
+        >
+          <option value="">No stage template</option>
+          {stages.map((t) => (
+            <option key={t.id} value={t.id}>{t.name} ({t.n_docs} docs)</option>
+          ))}
+        </select>
+        <select
+          className="flex-1 pl-3 pr-8 py-2 bg-surface-container-low border border-outline-variant rounded text-label-sm focus:outline-none focus:ring-1 focus:ring-pulse-teal-vibrant"
+          value={sectorId}
+          onChange={(e) => setSectorId(e.target.value)}
+        >
+          <option value="">No sector template</option>
+          {sectors.map((t) => (
+            <option key={t.id} value={t.id}>{t.name} ({t.n_docs} docs)</option>
+          ))}
+        </select>
+        <button
+          className="bg-secondary text-on-secondary px-5 py-2 rounded-lg text-label-sm font-bold hover:bg-secondary/90 transition-colors disabled:opacity-50 whitespace-nowrap"
+          disabled={busy || (!stageId && !sectorId)}
+          onClick={apply}
+        >
+          {busy ? "Applying…" : "Apply to organization"}
+        </button>
+      </div>
+      {result && <p className="text-body-sm text-secondary mt-3 font-medium">✓ {result}</p>}
+    </div>
+  );
+}
+
 function KnowledgeTab({ org, onSaved }: { org: Org; onSaved: (o: Org) => void }) {
   const [docs, setDocs] = useState<KDoc[]>([]);
   const [busy, setBusy] = useState(false);
@@ -398,6 +487,9 @@ function KnowledgeTab({ org, onSaved }: { org: Org; onSaved: (o: Org) => void })
           </div>
         )}
       </div>
+
+      {/* Apply stage & sector templates */}
+      <ApplyTemplatesPanel org={org} onApplied={load} />
 
       {/* Knowledge Base & RAG Context */}
       <div className="bg-surface-container-lowest border border-surface-variant rounded-lg shadow-ambient overflow-hidden flex flex-col">
@@ -633,8 +725,51 @@ function ConfigTab({ org, onSaved }: { org: Org; onSaved: (o: Org) => void }) {
               {saved ? "Saved ✓" : "Save Configuration"}
             </button>
           </div>
+
+          <SkillGrantsPanel orgId={org.id} />
         </section>
       </div>
+    </div>
+  );
+}
+
+function SkillGrantsPanel({ orgId }: { orgId: string }) {
+  const [rows, setRows] = useState<{ id: string; name: string; command: string; description: string; granted: boolean }[]>([]);
+  const load = () => orgSkillGrants(orgId).then(setRows).catch(() => setRows([]));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  return (
+    <div className="bg-surface border border-outline-variant rounded p-6 shadow-ambient">
+      <h3 className="text-headline-sm text-on-surface font-semibold mb-1 flex items-center gap-2">
+        <span className="material-symbols-outlined text-pulse-teal-vibrant" style={{ fontSize: 20 }}>bolt</span>
+        Skills
+      </h3>
+      <p className="text-body-sm text-on-surface-variant mb-3">
+        Slash commands this organization&apos;s users can invoke in chat (e.g. <code className="bg-surface-container px-1 rounded">/design-thinking</code>).
+      </p>
+      {rows.length === 0 && <p className="text-body-sm text-on-surface-variant">No skills exist yet — create them in Stage Knowledge.</p>}
+      {rows.map((s) => (
+        <label key={s.id} className="flex items-start gap-3 py-2.5 border-b border-outline-variant/50 cursor-pointer last:border-0">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={s.granted}
+            onChange={async (e) => {
+              if (e.target.checked) await grantSkill(orgId, s.id);
+              else await revokeSkill(orgId, s.id);
+              load();
+            }}
+          />
+          <span>
+            <span className="text-body-sm text-on-surface font-medium">{s.name}</span>
+            <code className="ml-2 text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded" style={{ fontSize: 11 }}>/{s.command}</code>
+            {s.description && <span className="block text-on-surface-variant" style={{ fontSize: 12 }}>{s.description}</span>}
+          </span>
+        </label>
+      ))}
     </div>
   );
 }

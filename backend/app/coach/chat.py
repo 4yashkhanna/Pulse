@@ -10,12 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator
 
+import re
+
 from ..config import get_settings
 from ..db import get_conn
 from ..llm import generate, generate_stream
 from ..rag.retrieve import Chunk, retrieve
+from . import skills as skills_mod
 from . import tagging
 from .prompts import build_system_prompt
+
+SLASH_RE = re.compile(r"^/([a-z0-9][a-z0-9-]*)\s*", re.IGNORECASE)
 
 
 @dataclass
@@ -36,6 +41,7 @@ class PreparedTurn:
     history: list[dict]
     chunks: list[Chunk]
     system_prompt: str
+    skill: dict | None = None  # {"name","command"} when a skill is pinned to the chat
 
 
 def _org_config(conn, org_id: str) -> dict:
@@ -82,6 +88,7 @@ def _prepare_turn(
     # What we embed/tag/store as the user's text. If they sent only files, use a placeholder.
     text = message.strip() or "(see attached file)"
 
+    skill: dict | None = None
     with get_conn() as conn:
         cfg = _org_config(conn, org_id)
         if conversation_id:
@@ -92,13 +99,23 @@ def _prepare_turn(
             title = row["title"] if row else "New chat"
             # The conversation's own project is authoritative for retrieval.
             project_id = str(row["project_id"]) if row and row["project_id"] else None
+            skill = skills_mod.skill_for_conversation(conn, conversation_id)
         else:
             history = []
-            base_title = message.strip() or (attachments[0][2] if attachments else "New chat")
+            # A new chat starting with /command pins that skill to the conversation.
+            m = SLASH_RE.match(text)
+            if m:
+                skill = skills_mod.resolve_command(conn, org_id, m.group(1))
+                if skill:
+                    text = text[m.end():].strip() or f"Let's begin. Use the {skill['name']} process."
+            base_title = text if skill else (message.strip() or (attachments[0][2] if attachments else "New chat"))
+            if skill:
+                base_title = f"/{skill['command']} · {base_title}"
             title = (base_title[:48] + "…") if len(base_title) > 48 else base_title
             conv = conn.execute(
-                "INSERT INTO conversations (org_id, user_id, project_id, title) VALUES (%s,%s,%s,%s) RETURNING id",
-                (org_id, user_id, project_id, title),
+                "INSERT INTO conversations (org_id, user_id, project_id, skill_id, title) "
+                "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                (org_id, user_id, project_id, skill["id"] if skill else None, title),
             ).fetchone()
             conversation_id = str(conv["id"])
             conn.commit()
@@ -129,6 +146,8 @@ def _prepare_turn(
         maturity_label=cfg.get("maturity_label"),
         coach_prompt=cfg.get("coach_prompt"),
     )
+    if skill:
+        system_prompt += f"\n\n{skill['body']}"
     return PreparedTurn(
         text=text,
         attach_note=attach_note,
@@ -137,6 +156,7 @@ def _prepare_turn(
         history=history,
         chunks=chunks,
         system_prompt=system_prompt,
+        skill={"name": skill["name"], "command": skill["command"]} if skill else None,
     )
 
 
@@ -233,6 +253,7 @@ def run_turn_stream(
         "type": "meta",
         "conversation_id": prep.conversation_id,
         "title": prep.title,
+        "skill": prep.skill,
         "retrieved": [
             {"source": c.source, "scope": c.scope, "similarity": round(c.similarity, 3)}
             for c in prep.chunks

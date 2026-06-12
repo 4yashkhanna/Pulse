@@ -1,157 +1,228 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Guard from "@/components/Guard";
-import { Org, listOrgs } from "@/lib/api";
+import KnowledgePanel from "@/components/KnowledgePanel";
+import {
+  KTemplate,
+  Skill,
+  createSector,
+  createSkill,
+  deleteSkill,
+  deleteTemplateDoc,
+  listSkills,
+  listTemplateDocs,
+  listTemplates,
+  updateSkill,
+  uploadTemplateDocs,
+} from "@/lib/api";
 
-const STAGES = [
-  { n: 1, label: "Initial Assessment", icon: "assessment", desc: "Ad-hoc processes and siloed design initiatives." },
-  { n: 2, label: "Foundation", icon: "foundation", desc: "Establishing shared libraries and initial AI-assisted workflows." },
-  { n: 3, label: "Optimization", icon: "tune", desc: "Scaled design systems and integrated performance metrics." },
-  { n: 4, label: "Optimized", icon: "speed", desc: "AI deeply integrated into generative design and fully automated compliance." },
-  { n: 5, label: "Target Goal", icon: "flag", desc: "Continuous autonomous improvement and strategic design leadership." },
-];
+const STAGE_META: Record<string, { icon: string; desc: string }> = {
+  "stage-1": { icon: "assessment", desc: "Ad-hoc processes and siloed design initiatives." },
+  "stage-2": { icon: "foundation", desc: "Establishing shared libraries and initial AI-assisted workflows." },
+  "stage-3": { icon: "tune", desc: "Scaled design systems and integrated performance metrics." },
+  "stage-4": { icon: "speed", desc: "AI deeply integrated into generative design and automated compliance." },
+  "stage-5": { icon: "flag", desc: "Continuous autonomous improvement and strategic design leadership." },
+};
 
-const SECTORS = [
-  { name: "Retail", icon: "shopping_cart", desc: "Consumer-focused design, e-commerce, and store-level experience." },
-  { name: "Fintech", icon: "account_balance", desc: "Security-first design, financial literacy, and transactional efficiency." },
-  { name: "Healthcare", icon: "monitor_heart", desc: "Accessibility, patient data privacy, and medical compliance." },
-  { name: "Manufacturing", icon: "precision_manufacturing", desc: "Process optimization, industrial IoT, and workforce training." },
-];
+const SECTOR_ICONS: Record<string, string> = {
+  tech: "memory",
+  fmcg: "shopping_cart",
+  banking: "account_balance",
+  healthcare: "monitor_heart",
+  government: "account_balance_wallet",
+};
+
+function TemplateCard({ tpl, open, onToggle }: { tpl: KTemplate; open: boolean; onToggle: () => void }) {
+  const meta = tpl.kind === "stage" ? STAGE_META[tpl.key] : undefined;
+  const icon = meta?.icon || SECTOR_ICONS[tpl.key] || "category";
+  return (
+    <div
+      className={`bg-surface-container-lowest rounded-xl p-stack-md border shadow-ambient flex flex-col transition-all ${
+        open ? "border-pulse-teal-vibrant" : "border-outline-variant hover:-translate-y-0.5 hover:shadow-md hover:border-pulse-teal-vibrant"
+      }`}
+      style={tpl.kind === "stage" ? { minWidth: 300, width: 300, flexShrink: 0 } : undefined}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className="w-11 h-11 rounded bg-surface-container-highest text-primary flex items-center justify-center">
+          <span className="material-symbols-outlined">{icon}</span>
+        </div>
+        <span className="text-label-caps text-on-surface-variant">{tpl.n_docs} docs · {tpl.n_chunks} chunks</span>
+      </div>
+      {tpl.kind === "stage" && (
+        <div className="text-label-caps text-on-surface-variant mb-1">{tpl.key.replace("-", " ").toUpperCase()}</div>
+      )}
+      <h3 className="text-headline-sm text-primary font-semibold mb-2">{tpl.name}</h3>
+      <p className="text-body-sm text-on-surface-variant flex-1">{meta?.desc || tpl.description || "Sector coaching context and premade RAG documents."}</p>
+      <button
+        onClick={onToggle}
+        className={`mt-4 text-label-sm py-2 rounded transition-colors font-medium ${
+          open ? "bg-primary text-white" : "bg-surface-container text-primary hover:bg-primary/10"
+        }`}
+      >
+        {open ? "Close" : "Manage documents"}
+      </button>
+    </div>
+  );
+}
+
+function SkillEditor({ skill, onSaved, onDeleted }: { skill: Skill; onSaved: () => void; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [body, setBody] = useState(skill.body);
+  const [description, setDescription] = useState(skill.description);
+  const [saved, setSaved] = useState(false);
+  return (
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-4 mb-3">
+      <div className="flex items-center gap-3 cursor-pointer" onClick={() => setOpen((o) => !o)}>
+        <span className="material-symbols-outlined text-pulse-teal-vibrant">bolt</span>
+        <div className="flex-1">
+          <span className="text-headline-sm text-primary font-semibold">{skill.name}</span>
+          <code className="ml-3 text-body-sm bg-surface-container px-2 py-0.5 rounded text-secondary">/{skill.command}</code>
+        </div>
+        <span className="text-body-sm text-on-surface-variant">{skill.n_orgs ?? 0} org{(skill.n_orgs ?? 0) === 1 ? "" : "s"} granted</span>
+        <span className="material-symbols-outlined text-on-surface-variant">{open ? "expand_less" : "expand_more"}</span>
+      </div>
+      {open && (
+        <div className="mt-4 flex flex-col gap-3">
+          <div>
+            <label className="text-label-caps text-on-surface-variant block mb-1">Description (shown in the / autocomplete)</label>
+            <input className="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-label-caps text-on-surface-variant block mb-1">Instructions (injected into the coach for the whole chat)</label>
+            <textarea className="w-full bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant font-mono" rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="bg-primary text-white text-label-sm px-4 py-2 rounded hover:bg-primary/90"
+              onClick={async () => { await updateSkill(skill.id, { description, body }); setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved(); }}
+            >
+              {saved ? "Saved ✓" : "Save"}
+            </button>
+            <button
+              className="text-error text-label-sm px-4 py-2 rounded hover:bg-error/10"
+              onClick={async () => { if (confirm(`Delete skill /${skill.command}?`)) { await deleteSkill(skill.id); onDeleted(); } }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StageKnowledge() {
-  const [orgs, setOrgs] = useState<Org[]>([]);
-  const [query, setQuery] = useState("");
+  const [templates, setTemplates] = useState<KTemplate[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [showNewSkill, setShowNewSkill] = useState(false);
+  const [ns, setNs] = useState({ name: "", command: "", description: "", body: "" });
 
-  useEffect(() => {
-    listOrgs().then(setOrgs).catch(() => {});
-  }, []);
+  const load = () => { listTemplates().then(setTemplates).catch(() => {}); listSkills().then(setSkills).catch(() => {}); };
+  useEffect(load, []);
 
-  const countByStage = useMemo(() => {
-    const m: Record<number, number> = {};
-    orgs.forEach((o) => { m[o.maturity_stage] = (m[o.maturity_stage] || 0) + 1; });
-    return m;
-  }, [orgs]);
+  const stages = templates.filter((t) => t.kind === "stage");
+  const sectors = templates.filter((t) => t.kind === "sector");
+  const openTpl = templates.find((t) => t.id === openId) || null;
 
-  // the stage with the most active orgs is the current focus
-  const focusStage = useMemo(() => {
-    let best = 0, n = -1;
-    Object.entries(countByStage).forEach(([s, c]) => { if (c > n) { n = c; best = Number(s); } });
-    return best;
-  }, [countByStage]);
-
-  const visibleStages = STAGES.filter(
-    (s) => !query || s.label.toLowerCase().includes(query.toLowerCase()),
-  );
+  async function addSector() {
+    const name = prompt("Sector name (e.g. Energy & Utilities):");
+    if (!name) return;
+    await createSector(name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name);
+    load();
+  }
 
   return (
     <div className="app-main">
-      {/* TopNavBar */}
       <header className="topbar">
-        <div className="text-headline-md font-bold text-primary">Stage Management</div>
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            <span className="material-symbols-outlined text-outline absolute left-3 top-1/2 -translate-y-1/2">search</span>
-            <input
-              className="pl-10 pr-4 py-2 bg-surface-container-low border border-outline-variant rounded focus:border-pulse-teal-vibrant focus:ring-2 focus:ring-pulse-teal-vibrant/10 outline-none transition-all text-body-sm w-64"
-              placeholder="Search templates..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-          <button className="p-2 text-on-surface-variant hover:text-primary transition-colors">
-            <span className="material-symbols-outlined">notifications</span>
-          </button>
-          <button className="p-2 text-on-surface-variant hover:text-primary transition-colors">
-            <span className="material-symbols-outlined">help</span>
-          </button>
-        </div>
+        <div className="text-headline-md font-bold text-primary">Stage Knowledge</div>
+        <div />
       </header>
 
       <div className="page-canvas">
-        <div className="mb-10 max-w-4xl">
+        <div className="mb-8 max-w-4xl">
           <p className="text-body-lg text-on-surface-variant">
-            Define and manage global maturity roadmaps and industry-specific coaching contexts.
+            Premade RAG templates per maturity stage and sector, plus the skills users can invoke in chat.
+            Apply templates to an organization from its Knowledge tab.
           </p>
         </div>
 
-        {/* Maturity Stage Templates */}
-        <section className="mb-16">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-headline-md text-on-surface border-l-4 border-primary pl-3">Maturity Stage Templates</h2>
-          </div>
-          <div className="flex gap-6 overflow-x-auto pb-6">
-            {visibleStages.map((s) => {
-              const active = s.n === focusStage;
-              const orgsAtStage = countByStage[s.n] || 0;
-              return (
-                <div
-                  key={s.n}
-                  className="bg-surface-container-lowest rounded-xl p-stack-md border border-outline-variant shadow-ambient flex flex-col flex-shrink-0 relative transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-pulse-teal-vibrant"
-                  style={{ minWidth: 300, width: 300 }}
-                >
-                  <div className="absolute top-0 right-0 p-4">
-                    <button className="text-outline-variant hover:text-primary transition-colors">
-                      <span className="material-symbols-outlined text-sm">edit</span>
-                    </button>
-                  </div>
-                  <div
-                    className={`w-12 h-12 rounded flex items-center justify-center mb-4 relative overflow-hidden ${
-                      active ? "bg-primary-container text-white" : "bg-surface-container-highest text-primary"
-                    }`}
-                  >
-                    {active && <div className="absolute inset-0 bg-pulse-teal-vibrant/20" />}
-                    <span className="material-symbols-outlined text-2xl icon-fill relative z-10">{s.icon}</span>
-                  </div>
-                  <div className={`text-label-caps mb-1 ${active ? "text-primary font-bold" : s.n === 5 ? "text-pulse-teal-vibrant font-bold" : "text-on-surface-variant"}`}>
-                    STAGE {s.n}{active ? " · CURRENT FOCUS" : ""}
-                  </div>
-                  <h3 className="text-headline-sm text-primary font-semibold mb-3">{s.label}</h3>
-                  <p className="text-body-sm text-on-surface-variant flex-1">{s.desc}</p>
-                  <div className="mt-4 pt-4 border-t border-outline-variant/30 flex justify-between items-center">
-                    <span className={`text-xs font-medium ${active ? "text-primary font-bold" : "text-outline"}`}>
-                      {orgsAtStage} Active Organization{orgsAtStage === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+        {/* Stage templates */}
+        <section className="mb-12">
+          <h2 className="text-headline-md text-on-surface border-l-4 border-primary pl-3 mb-6">Maturity Stage Templates</h2>
+          <div className="flex gap-6 overflow-x-auto pb-4">
+            {stages.map((t) => (
+              <TemplateCard key={t.id} tpl={t} open={openId === t.id} onToggle={() => setOpenId(openId === t.id ? null : t.id)} />
+            ))}
           </div>
         </section>
 
-        {/* Industry Sector Templates */}
-        <section className="bg-surface-container-lowest rounded-xl p-stack-md border border-outline-variant shadow-ambient flex flex-col">
+        {/* Sector templates */}
+        <section className="mb-12">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-headline-md text-on-surface border-l-4 border-secondary pl-3">Industry Sector Templates</h2>
-            <button className="bg-primary text-white text-label-sm px-4 py-2 rounded hover:bg-primary/90 transition-colors">
+            <button className="bg-primary text-white text-label-sm px-4 py-2 rounded hover:bg-primary/90 transition-colors" onClick={addSector}>
               Add New Sector
             </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {SECTORS.map((sec) => (
-              <div
-                key={sec.name}
-                className="bg-white/95 border border-outline-variant shadow-ambient p-6 rounded-lg flex flex-col h-full transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-pulse-teal-vibrant"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded bg-tertiary/10 text-tertiary flex items-center justify-center">
-                      <span className="material-symbols-outlined">{sec.icon}</span>
-                    </div>
-                    <h3 className="text-headline-sm text-primary font-semibold">{sec.name}</h3>
-                  </div>
-                </div>
-                <p className="text-body-sm text-on-surface-variant flex-1 mb-6">{sec.desc}</p>
-                <div className="flex gap-2 mt-auto">
-                  <button className="flex-1 border border-outline text-on-surface-variant text-label-sm py-2 rounded hover:bg-surface-container-low transition-colors">
-                    Edit Sector
-                  </button>
-                  <button className="flex-1 bg-surface-container text-primary text-label-sm py-2 rounded hover:bg-primary/10 transition-colors font-medium">
-                    Manage Prompt
-                  </button>
-                </div>
-              </div>
+            {sectors.map((t) => (
+              <TemplateCard key={t.id} tpl={t} open={openId === t.id} onToggle={() => setOpenId(openId === t.id ? null : t.id)} />
             ))}
+          </div>
+        </section>
+
+        {/* Open template's document manager */}
+        {openTpl && (
+          <section className="mb-12 max-w-3xl">
+            <KnowledgePanel
+              title={`${openTpl.name} — template documents`}
+              hint="Documents here are embedded once. Applying this template to an organization copies them (instantly, no re-embedding) into that org's knowledge."
+              load={() => listTemplateDocs(openTpl.id)}
+              upload={(fs) => uploadTemplateDocs(openTpl.id, fs).then((r) => { load(); return r; })}
+              remove={(id) => deleteTemplateDoc(openTpl.id, id).then((r) => { load(); return r; })}
+            />
+          </section>
+        )}
+
+        {/* Skills */}
+        <section className="mb-12">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-headline-md text-on-surface border-l-4 border-pulse-teal-vibrant pl-3">Skills</h2>
+            <button className="bg-primary text-white text-label-sm px-4 py-2 rounded hover:bg-primary/90 transition-colors" onClick={() => setShowNewSkill((s) => !s)}>
+              {showNewSkill ? "Cancel" : "New Skill"}
+            </button>
+          </div>
+          <p className="text-body-sm text-on-surface-variant mb-4 max-w-3xl">
+            A skill is a strict process the coach follows when a user starts a chat with its slash command
+            (e.g. <code className="bg-surface-container px-1 rounded">/design-thinking</code>). Grant skills per organization
+            from the org&apos;s Pulse Config tab.
+          </p>
+
+          {showNewSkill && (
+            <div className="bg-surface-container-lowest border border-pulse-teal-vibrant rounded-lg p-4 mb-4 flex flex-col gap-3 max-w-3xl">
+              <div className="grid grid-cols-2 gap-3">
+                <input className="bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant" placeholder="Skill name (e.g. Lean Experiments)" value={ns.name} onChange={(e) => setNs({ ...ns, name: e.target.value })} />
+                <input className="bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant" placeholder="command (e.g. lean-experiments)" value={ns.command} onChange={(e) => setNs({ ...ns, command: e.target.value })} />
+              </div>
+              <input className="bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant" placeholder="Short description for the / autocomplete" value={ns.description} onChange={(e) => setNs({ ...ns, description: e.target.value })} />
+              <textarea className="bg-surface-container-low border border-outline-variant rounded px-3 py-2 text-body-sm focus:outline-none focus:border-pulse-teal-vibrant font-mono" rows={8} placeholder="Instructions the coach must follow for the whole conversation…" value={ns.body} onChange={(e) => setNs({ ...ns, body: e.target.value })} />
+              <button
+                className="bg-primary text-white text-label-sm px-4 py-2 rounded hover:bg-primary/90 self-start disabled:opacity-50"
+                disabled={!ns.name || !ns.command || !ns.body}
+                onClick={async () => { await createSkill(ns); setNs({ name: "", command: "", description: "", body: "" }); setShowNewSkill(false); load(); }}
+              >
+                Create skill
+              </button>
+            </div>
+          )}
+
+          <div className="max-w-3xl">
+            {skills.map((s) => (
+              <SkillEditor key={s.id} skill={s} onSaved={load} onDeleted={load} />
+            ))}
+            {skills.length === 0 && <p className="text-body-sm text-on-surface-variant">No skills yet.</p>}
           </div>
         </section>
       </div>

@@ -193,8 +193,13 @@ def get_conversation(conversation_id: str, user: CurrentUser = Depends(require_o
             "SELECT role, content, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at",
             (conversation_id,),
         ).fetchall()
+        sk = conn.execute(
+            "SELECT s.name, s.command FROM conversations c JOIN skills s ON s.id = c.skill_id WHERE c.id = %s",
+            (conversation_id,),
+        ).fetchone()
     return {
         "id": conversation_id,
+        "skill": {"name": sk["name"], "command": sk["command"]} if sk else None,
         "messages": [{"role": r["role"], "content": r["content"]} for r in rows],
     }
 

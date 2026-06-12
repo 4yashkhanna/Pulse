@@ -20,10 +20,18 @@ import {
   listConversations,
   listProjectDocs,
   listProjects,
+  mySkills,
   sendMessageStream,
   unimportFolder,
   uploadProjectDocs,
 } from "@/lib/api";
+
+interface SkillInfo {
+  id?: string;
+  name: string;
+  command: string;
+  description?: string;
+}
 
 interface Msg {
   role: "user" | "assistant";
@@ -45,9 +53,18 @@ function Chat() {
   const [showManage, setShowManage] = useState(false);
   const [pf, setPf] = useState<ProjectFolders | null>(null);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [activeSkill, setActiveSkill] = useState<SkillInfo | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Slash autocomplete: only when starting a NEW chat with "/"
+  const slashQuery = !activeId && input.startsWith("/") ? input.slice(1).split(/\s/)[0].toLowerCase() : null;
+  const slashMatches =
+    slashQuery !== null && !input.includes(" ")
+      ? skills.filter((s) => s.command.startsWith(slashQuery))
+      : [];
 
   const loadProjects = () => listProjects().then(setProjects);
   const loadConvos  = () => listConversations().then(setConversations);
@@ -58,6 +75,7 @@ function Chat() {
       if (ps.length && !activeProject) setActiveProject(ps[0].id);
     });
     loadConvos();
+    mySkills().then(setSkills).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -85,6 +103,7 @@ function Chat() {
     setInput("");
     setFiles([]);
     setArtifact(null);
+    setActiveSkill(null);
   }
 
   function extractArtifact(reply: string): Artifact | null {
@@ -99,6 +118,7 @@ function Chat() {
     setLastReply(null);
     const c = await getConversation(id);
     setMessages(c.messages as Msg[]);
+    setActiveSkill(c.skill || null);
   }
 
   async function addProject() {
@@ -134,6 +154,7 @@ function Chat() {
           convTitle = meta.title;
           retrieved = meta.retrieved;
           setActiveId(meta.conversation_id);
+          if (meta.skill) setActiveSkill(meta.skill);
         },
         onDelta: (t) => {
           acc += t;
@@ -374,7 +395,38 @@ function Chat() {
 
               {/* Input */}
               <div className="chat-input-wrap">
-                <div className="max-w-4xl mx-auto">
+                <div className="max-w-4xl mx-auto relative">
+                  {/* Active skill chip */}
+                  {activeSkill && (
+                    <div className="flex justify-center mb-2">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-pulse-teal-vibrant/10 border border-pulse-teal-vibrant/40 text-label-sm text-primary font-medium">
+                        <span className="material-symbols-outlined text-pulse-teal-vibrant" style={{ fontSize: 16 }}>bolt</span>
+                        {activeSkill.name} active — the coach follows this process for the whole chat
+                      </span>
+                    </div>
+                  )}
+                  {/* Slash-command autocomplete */}
+                  {slashMatches.length > 0 && (
+                    <div className="absolute bottom-full left-0 right-0 mb-2 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-md overflow-hidden z-20">
+                      {slashMatches.map((s) => (
+                        <button
+                          key={s.command}
+                          className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-surface-container-low transition-colors border-b border-outline-variant/40 last:border-0"
+                          onClick={() => {
+                            setInput(`/${s.command} `);
+                            textareaRef.current?.focus();
+                          }}
+                        >
+                          <span className="material-symbols-outlined text-pulse-teal-vibrant mt-0.5" style={{ fontSize: 18 }}>bolt</span>
+                          <span>
+                            <span className="text-body-sm font-bold text-primary">/{s.command}</span>
+                            <span className="ml-2 text-body-sm text-on-surface">{s.name}</span>
+                            {s.description && <span className="block text-on-surface-variant" style={{ fontSize: 12 }}>{s.description}</span>}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="chat-input-box">
                     <input ref={fileRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
                       onChange={(e) => { setFiles((fs) => [...fs, ...Array.from(e.target.files || [])]); if (fileRef.current) fileRef.current.value = ""; }} />
@@ -389,7 +441,7 @@ function Chat() {
                       ref={textareaRef}
                       className="chat-input"
                       rows={1}
-                      placeholder="Ask the AI Coach…"
+                      placeholder={skills.length && !activeId ? "Ask the AI Coach… (type / for skills)" : "Ask the AI Coach…"}
                       value={input}
                       onChange={(e) => {
                         setInput(e.target.value);

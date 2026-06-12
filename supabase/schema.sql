@@ -92,11 +92,45 @@ CREATE TABLE IF NOT EXISTS project_folder_imports (
     PRIMARY KEY (project_id, folder_id)
 );
 
--- scope ∈ ('org','team','user'); scope_id is the org_id / team_id / user_id it belongs to.
+-- ---------------------------------------------------------------------------
+-- Knowledge templates: global (no org) premade RAG sets per maturity stage or
+-- sector, curated by KPMG admins. Applying one to an org COPIES its documents
+-- (chunks + embeddings included) into that org's knowledge.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS knowledge_templates (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind        TEXT NOT NULL CHECK (kind IN ('stage','sector')),
+    key         TEXT NOT NULL,        -- 'stage-1'..'stage-5' or sector slug e.g. 'tech'
+    name        TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (kind, key)
+);
+
+-- ---------------------------------------------------------------------------
+-- Skills: admin-authored slash-command behaviours (like /design-thinking).
+-- Granted per-org; a user pins one to a conversation by starting it with /command.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS skills (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT NOT NULL,
+    command     TEXT UNIQUE NOT NULL,  -- without the slash, e.g. 'design-thinking'
+    description TEXT DEFAULT '',
+    body        TEXT NOT NULL,         -- instructions injected into the system prompt
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS org_skills (
+    org_id    UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    skill_id  UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    PRIMARY KEY (org_id, skill_id)
+);
+
+-- scope ∈ ('org','team','user','template'); scope_id is the org/team/user/template id.
 -- project_id is set when the document belongs to a specific project (NULL = general bucket).
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id       UUID REFERENCES organizations(id) ON DELETE CASCADE,  -- NULL for templates
     scope        TEXT NOT NULL DEFAULT 'org',
     scope_id     UUID,
     filename     TEXT NOT NULL,
@@ -111,10 +145,12 @@ ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEF
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS scope_id UUID;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS project_id UUID;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS folder_id UUID;
+ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS from_template_id UUID;  -- provenance
+ALTER TABLE knowledge_documents ALTER COLUMN org_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id       UUID REFERENCES organizations(id) ON DELETE CASCADE,  -- NULL for templates
     document_id  UUID REFERENCES knowledge_documents(id) ON DELETE CASCADE,
     scope        TEXT NOT NULL DEFAULT 'org',
     scope_id     UUID,
@@ -129,6 +165,7 @@ ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAUL
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS scope_id UUID;
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS project_id UUID;
 ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS folder_id UUID;
+ALTER TABLE knowledge_chunks ALTER COLUMN org_id DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS knowledge_chunks_org_idx ON knowledge_chunks(org_id);
 CREATE INDEX IF NOT EXISTS knowledge_chunks_scope_idx ON knowledge_chunks(scope, scope_id);
@@ -148,6 +185,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE SET NULL;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS skill_id UUID REFERENCES skills(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS messages (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),

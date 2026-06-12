@@ -161,7 +161,12 @@ export const sendMessage = (
 // Streaming chat (SSE over fetch). Resolves when the stream ends; rejects on
 // HTTP errors or an in-stream {"type":"error"} event.
 export interface StreamCallbacks {
-  onMeta?: (meta: { conversation_id: string; title: string; retrieved: ChatReply["retrieved"] }) => void;
+  onMeta?: (meta: {
+    conversation_id: string;
+    title: string;
+    retrieved: ChatReply["retrieved"];
+    skill?: { name: string; command: string } | null;
+  }) => void;
   onDelta?: (text: string) => void;
   onTag?: (tag: ChatReply["tag"]) => void;
 }
@@ -275,7 +280,11 @@ export const unimportFolder = (pid: string, fid: string) =>
 export const listConversations = (q?: string) =>
   req<Conversation[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
 export const getConversation = (id: string) =>
-  req<{ id: string; messages: { role: string; content: string }[] }>(`/conversations/${id}`);
+  req<{
+    id: string;
+    skill: { name: string; command: string } | null;
+    messages: { role: string; content: string }[];
+  }>(`/conversations/${id}`);
 export const deleteConversation = (id: string) =>
   req<any>(`/conversations/${id}`, { method: "DELETE" });
 
@@ -303,5 +312,50 @@ export const deleteMemberDoc = (uid: string, id: string) =>
 export const dashMe = () => req<any>("/dashboard/me");
 export const dashTeam = () => req<any>("/dashboard/team");
 export const dashMember = (id: string) => req<any>(`/dashboard/member/${id}`);
+
+// --- knowledge templates (admin) ---
+export interface KTemplate {
+  id: string;
+  kind: "stage" | "sector";
+  key: string;
+  name: string;
+  description: string;
+  n_docs: number;
+  n_chunks: number;
+}
+export const listTemplates = () => req<KTemplate[]>("/templates");
+export const createSector = (key: string, name: string, description = "") =>
+  req<any>("/templates/sectors", { method: "POST", body: JSON.stringify({ key, name, description }) });
+export const listTemplateDocs = (tid: string) => req<KDoc[]>(`/templates/${tid}/knowledge`);
+export const uploadTemplateDocs = (tid: string, files: FileList | File[]) =>
+  uploadTo(`/templates/${tid}/knowledge/upload`, files);
+export const deleteTemplateDoc = (tid: string, docId: string) =>
+  req<any>(`/templates/${tid}/knowledge/${docId}`, { method: "DELETE" });
+export const applyTemplate = (tid: string, orgId: string) =>
+  req<{ template: string; copied: string[]; skipped: string[] }>(`/templates/${tid}/apply/${orgId}`, { method: "POST" });
+
+// --- skills ---
+export interface Skill {
+  id: string;
+  name: string;
+  command: string;
+  description: string;
+  body: string;
+  n_orgs?: number;
+}
+export const listSkills = () => req<Skill[]>("/skills");
+export const createSkill = (s: { name: string; command: string; description: string; body: string }) =>
+  req<Skill>("/skills", { method: "POST", body: JSON.stringify(s) });
+export const updateSkill = (id: string, s: Partial<Skill>) =>
+  req<Skill>(`/skills/${id}`, { method: "PATCH", body: JSON.stringify(s) });
+export const deleteSkill = (id: string) => req<any>(`/skills/${id}`, { method: "DELETE" });
+export const orgSkillGrants = (orgId: string) =>
+  req<{ id: string; name: string; command: string; description: string; granted: boolean }[]>(`/skills/grants/${orgId}`);
+export const grantSkill = (orgId: string, skillId: string) =>
+  req<any>(`/skills/grants/${orgId}/${skillId}`, { method: "POST" });
+export const revokeSkill = (orgId: string, skillId: string) =>
+  req<any>(`/skills/grants/${orgId}/${skillId}`, { method: "DELETE" });
+export const mySkills = () =>
+  req<{ id: string; name: string; command: string; description: string }[]>("/skills/mine");
 
 export { API_BASE };

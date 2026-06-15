@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth.routes import router as auth_router
 from .coach.routes import router as coach_router
 from .coach.skills import router as skills_router
+from .connections.routes import router as connections_router
 from .config import get_settings
 from .dashboard.routes import router as dashboard_router
 from .knowledge.folders import router as folders_router
@@ -38,6 +39,7 @@ app.include_router(skills_router)
 app.include_router(projects_router)
 app.include_router(coach_router)
 app.include_router(dashboard_router)
+app.include_router(connections_router)
 
 
 @app.get("/health")

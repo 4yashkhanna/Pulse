@@ -150,6 +150,52 @@ def generate_stream(
     raise NotImplementedError(f"Streaming for provider '{settings.llm_provider}' not wired yet.")
 
 
+async def generate_with_tools(
+    system_prompt: str,
+    user_content: str,
+    *,
+    sessions: list[Any],
+    temperature: float = 0.6,
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> tuple[str, list[str]]:
+    """Tool-augmented generation: the model may call MCP tools mid-turn.
+
+    `sessions` is a list of live MCP ClientSessions (one per connected provider). The
+    google-genai SDK natively accepts them in `tools=` and runs automatic function
+    calling — it executes the tool calls against the sessions and returns the final text.
+
+    Returns (reply_text, tool_names_called) so the chat layer can surface which tools ran.
+    Falls back to a plain reply if there are no sessions.
+    """
+    settings = get_settings()
+    if settings.llm_provider != "gemini":
+        raise NotImplementedError(f"Tool use for provider '{settings.llm_provider}' not wired yet.")
+    from google.genai import types
+
+    client = _gemini_client()
+    contents: list = [user_content]
+    for mime, data in attachments or []:
+        contents.append(types.Part.from_bytes(data=data, mime_type=mime))
+
+    resp = await client.aio.models.generate_content(
+        model=settings.chat_model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=temperature,
+            tools=sessions,  # MCP ClientSessions — SDK handles the call loop
+        ),
+    )
+    # Recover which tools the model actually invoked from the AFC history.
+    called: list[str] = []
+    for item in getattr(resp, "automatic_function_calling_history", None) or []:
+        for part in getattr(item, "parts", None) or []:
+            fc = getattr(part, "function_call", None)
+            if fc and fc.name and fc.name not in called:
+                called.append(fc.name)
+    return (resp.text or "").strip(), called
+
+
 def generate_json(system_prompt: str, user_content: str, schema: dict[str, Any]) -> dict[str, Any]:
     """Structured JSON generation used by passive tagging.
 

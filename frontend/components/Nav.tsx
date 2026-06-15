@@ -36,6 +36,7 @@ export default function Nav() {
     : [
         { href: "/chat", label: "Chats", icon: "chat" },
         { href: "/knowledge", label: "Team Knowledge", icon: "hub" },
+        { href: "/connections", label: "Connections", icon: "power" },
         { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
       ];
 

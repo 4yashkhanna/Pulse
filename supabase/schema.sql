@@ -250,6 +250,27 @@ CREATE TABLE IF NOT EXISTS baseline (
 );
 
 -- ---------------------------------------------------------------------------
+-- Per-user tool connections (Notion, Figma, Linear, Jira).
+-- Each row is one user's OAuth grant for one provider. Tokens are stored
+-- ENCRYPTED (Fernet) — never in plaintext. The coach opens an MCP session with
+-- the decrypted access token at chat time. Personal + opt-in, like Claude/ChatGPT.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_connections (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id            UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    provider          TEXT NOT NULL,            -- 'notion' | 'figma' | 'linear' | 'jira'
+    access_token_enc  TEXT NOT NULL,            -- Fernet-encrypted access token
+    refresh_token_enc TEXT,                     -- Fernet-encrypted refresh token (if any)
+    scopes            TEXT,                      -- granted scopes, space-separated
+    external_account  TEXT,                      -- display label, e.g. workspace/email
+    expires_at        TIMESTAMPTZ,               -- access token expiry (if any)
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, provider)
+);
+
+-- ---------------------------------------------------------------------------
 -- Layered vector search: org knowledge + the caller's team knowledge + their
 -- personal/project knowledge, all merged and ranked by similarity.
 -- ---------------------------------------------------------------------------

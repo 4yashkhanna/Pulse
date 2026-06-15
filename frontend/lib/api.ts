@@ -358,4 +358,21 @@ export const revokeSkill = (orgId: string, skillId: string) =>
 export const mySkills = () =>
   req<{ id: string; name: string; command: string; description: string }[]>("/skills/mine");
 
+// --- tool connections (org users): Notion / Figma / Linear / Jira ---
+export interface ConnectionStatus {
+  provider: "notion" | "figma" | "linear" | "jira";
+  label: string;
+  capability: string;
+  icon: string;
+  experimental: boolean;
+  configured: boolean;
+  connected: boolean;
+  account: string | null;
+}
+export const listConnections = () => req<ConnectionStatus[]>("/connections");
+export const startConnection = (provider: string) =>
+  req<{ authorize_url: string }>(`/connections/${provider}/start`);
+export const disconnectConnection = (provider: string) =>
+  req<any>(`/connections/${provider}`, { method: "DELETE" });
+
 export { API_BASE };

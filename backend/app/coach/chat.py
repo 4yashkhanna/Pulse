@@ -13,12 +13,13 @@ from typing import Iterator
 import re
 
 from ..config import get_settings
+from ..connections import store as conn_store
 from ..db import get_conn
 from ..llm import generate, generate_stream
 from ..rag.retrieve import Chunk, retrieve
 from . import skills as skills_mod
 from . import tagging
-from .prompts import build_system_prompt
+from .prompts import build_system_prompt, tools_addendum
 
 SLASH_RE = re.compile(r"^/([a-z0-9][a-z0-9-]*)\s*", re.IGNORECASE)
 
@@ -160,6 +161,46 @@ def _prepare_turn(
     )
 
 
+def _mcp_reply(
+    prep: PreparedTurn,
+    *,
+    user_id: str,
+    attachments: list[tuple[str, bytes, str]],
+) -> tuple[str, list[str]] | None:
+    """Tool-augmented reply when the user has connected tools.
+
+    Opens MCP sessions for the user's connected providers, appends the tool note to the
+    system prompt, and runs one tool-aware generation. Returns (reply, tools_used), or
+    None if no tools could be opened (caller falls back to the normal text path).
+
+    Runs the async MCP stack via asyncio.run — safe here because the streaming route
+    drives this generator in a threadpool with no running event loop.
+    """
+    import asyncio
+
+    from ..connections.mcp_client import open_user_tools
+    from ..llm import generate_with_tools
+
+    async def _run() -> tuple[str, list[str]] | None:
+        async with open_user_tools(user_id) as tools:
+            if not tools:
+                return None
+            sessions = [t.session for t in tools]
+            system_prompt = prep.system_prompt + tools_addendum([t.label for t in tools])
+            reply, called = await generate_with_tools(
+                system_prompt,
+                _format_history(prep.history, prep.text),
+                sessions=sessions,
+                attachments=[(mime, data) for mime, data, _ in attachments],
+            )
+            return reply, called
+
+    try:
+        return asyncio.run(_run())
+    except Exception:  # noqa: BLE001 — never let a tool failure break the turn
+        return None
+
+
 def _persist_turn(prep: PreparedTurn, message: str, reply: str) -> str:
     """Store both messages, bump the conversation timestamp; returns the user message id."""
     with get_conn() as conn:
@@ -210,11 +251,17 @@ def run_turn(
         message=message, org_id=org_id, user_id=user_id, conversation_id=conversation_id,
         team_id=team_id, project_id=project_id, attachments=attachments,
     )
-    reply = generate(
-        prep.system_prompt,
-        _format_history(prep.history, prep.text),
-        attachments=[(mime, data) for mime, data, _ in attachments],
-    )
+    reply: str | None = None
+    if conn_store.connected_providers(user_id):
+        tool_result = _mcp_reply(prep, user_id=user_id, attachments=attachments)
+        if tool_result is not None:
+            reply = tool_result[0]
+    if reply is None:
+        reply = generate(
+            prep.system_prompt,
+            _format_history(prep.history, prep.text),
+            attachments=[(mime, data) for mime, data, _ in attachments],
+        )
     user_msg_id = _persist_turn(prep, message, reply)
 
     tag = None
@@ -260,16 +307,30 @@ def run_turn_stream(
         ],
     }
 
-    parts: list[str] = []
-    for delta in generate_stream(
-        prep.system_prompt,
-        _format_history(prep.history, prep.text),
-        attachments=[(mime, data) for mime, data, _ in attachments],
-    ):
-        parts.append(delta)
-        yield {"type": "delta", "text": delta}
+    reply: str | None = None
+    # If the user has connected tools, take the tool-aware path. It's not token-streamed
+    # (the model may pause to call a tool), so we surface a status event, run it to
+    # completion, then emit the finished reply as one delta.
+    if conn_store.connected_providers(user_id):
+        yield {"type": "tool_status", "text": "Checking your connected tools…"}
+        tool_result = _mcp_reply(prep, user_id=user_id, attachments=attachments)
+        if tool_result is not None:
+            reply, used = tool_result
+            if used:
+                yield {"type": "tool_used", "names": used}
+            yield {"type": "delta", "text": reply}
 
-    reply = "".join(parts).strip()
+    if reply is None:
+        parts: list[str] = []
+        for delta in generate_stream(
+            prep.system_prompt,
+            _format_history(prep.history, prep.text),
+            attachments=[(mime, data) for mime, data, _ in attachments],
+        ):
+            parts.append(delta)
+            yield {"type": "delta", "text": delta}
+        reply = "".join(parts).strip()
+
     user_msg_id = _persist_turn(prep, message, reply)
     yield {"type": "done"}
 

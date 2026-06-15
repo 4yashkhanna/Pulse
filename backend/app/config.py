@@ -42,6 +42,15 @@ class Settings:
             os.getenv("SYNCHRONOUS_TAGGING", "true").lower() == "true"
         )
         self.frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+        # Public base URL of THIS backend — used to build OAuth redirect URIs for
+        # tool connections (Notion/Figma/Linear/Jira). Must match what you register
+        # in each provider's developer console.
+        self.backend_base_url: str = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
+        # Secret used to encrypt stored connection tokens at rest. In dev we derive a
+        # stable key from JWT_SECRET so no extra setup is needed; in prod set a real
+        # Fernet key (CONNECTIONS_SECRET) — `python -c "from cryptography.fernet import
+        # Fernet; print(Fernet.generate_key().decode())"`.
+        self.connections_secret: str = os.getenv("CONNECTIONS_SECRET", "")
 
         # Auth
         self.jwt_secret: str = os.getenv("JWT_SECRET", "dev-secret-change-me")
@@ -49,6 +58,10 @@ class Settings:
         if self.env == "prod" and self.jwt_secret == "dev-secret-change-me":
             raise RuntimeError(
                 "JWT_SECRET must be set to a strong random value when PULSE_ENV=prod."
+            )
+        if self.env == "prod" and not self.connections_secret:
+            raise RuntimeError(
+                "CONNECTIONS_SECRET (a Fernet key) must be set when PULSE_ENV=prod."
             )
 
         # Azure (production) — read but unused in the prototype.

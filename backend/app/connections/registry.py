@@ -5,9 +5,12 @@ OAuth client credentials in .env — no new integration code. Each provider poin
 remote MCP server; the coach talks to it through the standard MCP protocol, so we never
 hand-write REST wrappers.
 
-OAuth note: Notion, Linear and Atlassian run hosted MCP servers with their own OAuth.
-Figma's MCP is primarily a local desktop server today, so it's the most likely to need
-adjustment for a hosted multi-user deployment — flagged with `experimental=True`.
+OAuth note: providers differ in how their MCP server authenticates.
+- Linear, Jira (Atlassian): accept a classic OAuth-app bearer token → auth_mode="classic"
+  (client id/secret from a developer app registered in .env).
+- Notion, Figma: reject classic tokens; their MCP server runs its own OAuth authorization
+  server → auth_mode="mcp" (we discover its endpoints and self-register via Dynamic Client
+  Registration, the same flow Claude/ChatGPT use — no developer app needed).
 """
 from __future__ import annotations
 
@@ -26,7 +29,17 @@ class Provider:
     mcp_url: str                   # remote MCP server endpoint
     transport: str = "streamable_http"  # 'streamable_http' | 'sse'
 
-    # OAuth 2.0 (authorization-code)
+    # How the user's token is obtained:
+    #   'classic' — a pre-registered OAuth app (client id/secret in .env); the provider's
+    #               own OAuth endpoints (below) are used. Works when the MCP server accepts
+    #               classic OAuth-app tokens (Linear, Atlassian/Jira).
+    #   'mcp'     — the MCP-native OAuth flow: discover the server's auth endpoints and
+    #               self-register via Dynamic Client Registration. No developer app, no
+    #               client id/secret. Required by servers that reject classic tokens
+    #               (Notion, Figma) — the same mechanism Claude/ChatGPT use.
+    auth_mode: str = "classic"
+
+    # OAuth 2.0 (authorization-code) — only used in 'classic' mode
     authorize_url: str = ""
     token_url: str = ""
     scopes: str = ""               # space-separated
@@ -55,7 +68,11 @@ class Provider:
 
     @property
     def configured(self) -> bool:
-        """True when OAuth client credentials are present, so a real connect can run."""
+        """Whether a real connect can run. MCP-native providers self-register (DCR), so
+        they need no server-side credentials and are always 'configured'. Classic
+        providers need their OAuth app client id/secret in the environment."""
+        if self.auth_mode == "mcp":
+            return True
         return bool(self.client_id and self.client_secret)
 
 
@@ -66,15 +83,7 @@ PROVIDERS: dict[str, Provider] = {
         capability="Read your notes and create or update pages",
         icon="description",
         mcp_url="https://mcp.notion.com/mcp",
-        authorize_url="https://api.notion.com/v1/oauth/authorize",
-        token_url="https://api.notion.com/v1/oauth/token",
-        scopes="",  # Notion grants are page-level at consent time, not scope strings
-        extra_authorize_params={"owner": "user"},
-        uses_pkce=False,  # Notion uses HTTP Basic client auth on the token exchange
-        token_auth="basic",
-        token_format="json",
-        client_id_env="NOTION_CLIENT_ID",
-        client_secret_env="NOTION_CLIENT_SECRET",
+        auth_mode="mcp",  # mcp.notion.com rejects classic integration tokens
     ),
     "figma": Provider(
         key="figma",
@@ -82,11 +91,7 @@ PROVIDERS: dict[str, Provider] = {
         capability="Read your design files and leave comments",
         icon="brush",
         mcp_url="https://mcp.figma.com/mcp",
-        authorize_url="https://www.figma.com/oauth",
-        token_url="https://api.figma.com/v1/oauth/token",
-        scopes="file_read file_comments:write",
-        client_id_env="FIGMA_CLIENT_ID",
-        client_secret_env="FIGMA_CLIENT_SECRET",
+        auth_mode="mcp",  # mcp.figma.com rejects classic OAuth-app tokens
         experimental=True,
     ),
     "linear": Provider(

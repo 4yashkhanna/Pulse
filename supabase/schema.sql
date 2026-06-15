@@ -271,6 +271,25 @@ CREATE TABLE IF NOT EXISTS user_connections (
 );
 
 -- ---------------------------------------------------------------------------
+-- MCP-native OAuth clients (auth_mode='mcp', e.g. Notion/Figma). Their MCP server
+-- runs its own OAuth authorization server; we discover its endpoints once and
+-- self-register a client via Dynamic Client Registration, then reuse that
+-- registration for every user's connect. One row per provider (app-wide, not
+-- per-user — only the resulting tokens in user_connections are per-user).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+    provider               TEXT PRIMARY KEY,       -- 'notion' | 'figma'
+    resource               TEXT NOT NULL,          -- canonical MCP resource (RFC 8707)
+    authorization_endpoint TEXT NOT NULL,
+    token_endpoint         TEXT NOT NULL,
+    registration_endpoint  TEXT,
+    client_id              TEXT NOT NULL,          -- from Dynamic Client Registration
+    client_secret_enc      TEXT,                   -- Fernet-encrypted (null for public clients)
+    scopes                 TEXT,                   -- scopes to request, space-separated
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
 -- Layered vector search: org knowledge + the caller's team knowledge + their
 -- personal/project knowledge, all merged and ranked by similarity.
 -- ---------------------------------------------------------------------------

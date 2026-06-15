@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from ..auth.security import CurrentUser, get_current_user
 from ..config import get_settings
 from ..db import get_conn
-from . import oauth, store
+from . import mcp_oauth, oauth, store
 from .registry import PROVIDERS, get_provider
 
 log = logging.getLogger("pulse.connections")
@@ -57,7 +57,7 @@ def list_connections(user: CurrentUser = Depends(_require_org_user)):
 
 
 @router.get("/{provider}/start")
-def start(provider: str, user: CurrentUser = Depends(_require_org_user)):
+async def start(provider: str, user: CurrentUser = Depends(_require_org_user)):
     p = get_provider(provider)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown provider")
@@ -66,6 +66,19 @@ def start(provider: str, user: CurrentUser = Depends(_require_org_user)):
             status.HTTP_409_CONFLICT,
             f"{p.label} isn't set up yet — add {p.client_id_env} and {p.client_secret_env} to the server.",
         )
+    # MCP-native providers (Notion, Figma): discover endpoints + self-register (DCR), then
+    # build the authorize URL against the server's own OAuth. Classic providers use the
+    # pre-registered developer-app OAuth.
+    if p.auth_mode == "mcp":
+        try:
+            reg = await mcp_oauth.ensure_registration(p)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("MCP OAuth registration failed for %s: %s", provider, exc)
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                f"Couldn't set up {p.label}'s connection. Please try again.",
+            )
+        return {"authorize_url": mcp_oauth.build_authorize_url(p, reg, user.id)}
     return {"authorize_url": oauth.build_authorize_url(p, user.id)}
 
 
@@ -101,7 +114,15 @@ async def callback(
         return _back(f"error={provider}")
 
     try:
-        token_json = await oauth.exchange_code(p, code, payload)
+        if p.auth_mode == "mcp":
+            reg = store.get_mcp_client(provider)
+            if not reg:
+                raise RuntimeError("missing client registration")
+            token_json = await mcp_oauth.exchange_code(p, reg, code, payload.get("pkce"))
+            account = None  # MCP token responses carry no friendly account label
+        else:
+            token_json = await oauth.exchange_code(p, code, payload)
+            account = oauth.account_label(p, token_json)
     except Exception as exc:  # noqa: BLE001
         log.warning("OAuth token exchange failed for %s: %s", provider, exc)
         return _back(f"error={provider}")
@@ -121,7 +142,7 @@ async def callback(
         access_token=access,
         refresh_token=token_json.get("refresh_token"),
         scopes=token_json.get("scope") or p.scopes or None,
-        external_account=oauth.account_label(p, token_json),
+        external_account=account,
     )
     return _back(f"connected={provider}")
 

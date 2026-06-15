@@ -94,6 +94,29 @@ async def exchange_code(provider: Provider, code: str, state_payload: dict) -> d
     return resp.json()
 
 
+async def refresh_token(provider: Provider, refresh_token_value: str) -> dict:
+    """Exchange a refresh token for a fresh access token (classic OAuth providers)."""
+    data: dict[str, str] = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token_value,
+    }
+    headers = {"Accept": "application/json"}
+    auth = None
+    if provider.token_auth == "basic":
+        auth = (provider.client_id, provider.client_secret)
+    else:
+        data["client_id"] = provider.client_id
+        data["client_secret"] = provider.client_secret
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        if provider.token_format == "json":
+            resp = await client.post(provider.token_url, json=data, headers=headers, auth=auth)
+        else:
+            resp = await client.post(provider.token_url, data=data, headers=headers, auth=auth)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def account_label(provider: Provider, token_json: dict) -> str | None:
     """A friendly 'connected as …' label pulled from the provider's token response."""
     if provider.key == "notion":

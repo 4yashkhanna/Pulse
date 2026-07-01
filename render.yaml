@@ -33,6 +33,17 @@ services:
       - key: CONNECTIONS_SECRET
         sync: false
       - key: FRONTEND_ORIGIN
-        value: http://localhost:3000
+        sync: false
       - key: BACKEND_BASE_URL
         sync: false
+
+  - type: web
+    name: pulse-frontend
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start -- -p $PORT -H 0.0.0.0
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE
+        value: https://pulse-backend-by8c.onrender.com

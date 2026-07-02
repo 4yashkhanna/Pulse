@@ -204,7 +204,7 @@ def _issue_invite(conn, *, user_id: str, org_id: str, org_name: str, email: str,
     )
     invite_url = f"{settings.frontend_origin}/accept-invite?token={token}"
     if settings.env != "prod":
-        logger.info("[DEV] invite link for %s: %s", email, invite_url)
+        logger.warning("[DEV] invite link for %s: %s", email, invite_url)
     try:
         send_invite_email(to_email=email, to_name=name, org_name=org_name, invite_url=invite_url)
         return True

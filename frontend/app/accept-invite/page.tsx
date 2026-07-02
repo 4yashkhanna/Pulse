@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { acceptInvite } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-export default function AcceptInvitePage() {
+function AcceptInviteForm() {
   const router = useRouter();
   const params = useSearchParams();
   const { setUser } = useAuth();
@@ -38,6 +38,49 @@ export default function AcceptInvitePage() {
     }
   }
 
+  if (!token) {
+    return (
+      <div className="text-error text-body-sm bg-error-container/30 border border-error/20 px-3 py-2 rounded-lg">
+        This invite link is missing a token. Ask your admin to resend it.
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div>
+        <label className="text-label-sm text-on-surface-variant mb-1 block">New password</label>
+        <input
+          className="input-field w-full"
+          type="password"
+          placeholder="••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      <div>
+        <label className="text-label-sm text-on-surface-variant mb-1 block">Confirm password</label>
+        <input
+          className="input-field w-full"
+          type="password"
+          placeholder="••••••••"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          required
+        />
+      </div>
+      {error && (
+        <div className="text-error text-body-sm bg-error-container/30 border border-error/20 px-3 py-2 rounded-lg">{error}</div>
+      )}
+      <button className="btn w-full" style={{ height: 44, marginTop: 8 }} disabled={busy}>
+        {busy ? "Setting password…" : "Set password & sign in"}
+      </button>
+    </form>
+  );
+}
+
+export default function AcceptInvitePage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-primary">
       <div style={{ width: 400 }}>
@@ -57,42 +100,9 @@ export default function AcceptInvitePage() {
         {/* Card */}
         <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.15)" }}>
           <div className="card-label mb-6">Set your password to get started</div>
-          {!token ? (
-            <div className="text-error text-body-sm bg-error-container/30 border border-error/20 px-3 py-2 rounded-lg">
-              This invite link is missing a token. Ask your admin to resend it.
-            </div>
-          ) : (
-            <form onSubmit={submit} className="space-y-4">
-              <div>
-                <label className="text-label-sm text-on-surface-variant mb-1 block">New password</label>
-                <input
-                  className="input-field w-full"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="text-label-sm text-on-surface-variant mb-1 block">Confirm password</label>
-                <input
-                  className="input-field w-full"
-                  type="password"
-                  placeholder="••••••••"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  required
-                />
-              </div>
-              {error && (
-                <div className="text-error text-body-sm bg-error-container/30 border border-error/20 px-3 py-2 rounded-lg">{error}</div>
-              )}
-              <button className="btn w-full" style={{ height: 44, marginTop: 8 }} disabled={busy}>
-                {busy ? "Setting password…" : "Set password & sign in"}
-              </button>
-            </form>
-          )}
+          <Suspense fallback={<div className="muted text-body-sm">Loading…</div>}>
+            <AcceptInviteForm />
+          </Suspense>
         </div>
       </div>
     </div>

@@ -5,14 +5,21 @@ dashboard visibility settings.
 """
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
 from ..auth.security import CurrentUser, hash_password, require_kpmg_admin
+from ..config import get_settings
 from ..db import get_conn
+from ..notifications.email import EmailSendError, send_invite_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orgs", tags=["orgs"], dependencies=[Depends(require_kpmg_admin)])
 
@@ -40,8 +47,8 @@ class OrgUpdate(BaseModel):
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
-    # When omitted, a unique temporary password is generated and returned once
-    # in the response — no more shared default credentials.
+    # When omitted (the normal case), the user is emailed an invite link and
+    # sets their own password. Only set this to skip the invite flow entirely.
     password: str | None = None
     role: str = "employee"  # employee | manager
     team_id: str | None = None
@@ -169,13 +176,56 @@ def create_team(org_id: str, body: TeamCreate):
 # --------------------------------------------------------------------------- #
 # Users
 # --------------------------------------------------------------------------- #
+def _invite_status(accepted_at, expires_at) -> str:
+    if expires_at is None or accepted_at is not None:
+        return "active"
+    if expires_at > dt.datetime.now(dt.timezone.utc):
+        return "pending"
+    return "expired"
+
+
+def _issue_invite(conn, *, user_id: str, org_id: str, org_name: str, email: str, name: str, invited_by: str) -> bool:
+    """Expire any prior pending invite for this user, issue a fresh single-use
+    token, and email it. Returns whether the email actually sent."""
+    settings = get_settings()
+    conn.execute(
+        "UPDATE user_invites SET expires_at = now() WHERE user_id = %s AND accepted_at IS NULL",
+        (user_id,),
+    )
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=settings.invite_ttl_hours)
+    conn.execute(
+        """
+        INSERT INTO user_invites (user_id, org_id, token_hash, expires_at, invited_by)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        (user_id, org_id, token_hash, expires_at, invited_by),
+    )
+    invite_url = f"{settings.frontend_origin}/accept-invite?token={token}"
+    if settings.env != "prod":
+        logger.info("[DEV] invite link for %s: %s", email, invite_url)
+    try:
+        send_invite_email(to_email=email, to_name=name, org_name=org_name, invite_url=invite_url)
+        return True
+    except EmailSendError as e:
+        logger.warning("invite email failed for %s: %s", email, e)
+        return False
+
+
 @router.get("/{org_id}/users")
 def list_users(org_id: str):
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT u.id, u.name, u.email, u.role, u.team_id, t.name AS team_name
-            FROM users u LEFT JOIN teams t ON t.id = u.team_id
+            SELECT u.id, u.name, u.email, u.role, u.team_id, t.name AS team_name,
+                   ui.accepted_at, ui.expires_at
+            FROM users u
+            LEFT JOIN teams t ON t.id = u.team_id
+            LEFT JOIN LATERAL (
+                SELECT accepted_at, expires_at FROM user_invites
+                WHERE user_id = u.id ORDER BY created_at DESC LIMIT 1
+            ) ui ON true
             WHERE u.org_id = %s ORDER BY u.role, u.name
             """,
             (org_id,),
@@ -188,42 +238,79 @@ def list_users(org_id: str):
             "role": r["role"],
             "team_id": str(r["team_id"]) if r["team_id"] else None,
             "team_name": r["team_name"],
+            "invite_status": _invite_status(r["accepted_at"], r["expires_at"]),
         }
         for r in rows
     ]
 
 
 @router.post("/{org_id}/users", status_code=201)
-def create_user(org_id: str, body: UserCreate):
+def create_user(org_id: str, body: UserCreate, admin: CurrentUser = Depends(require_kpmg_admin)):
     if body.role not in ("employee", "manager"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "role must be employee or manager")
-    password = body.password or secrets.token_urlsafe(9)
+    email = body.email.lower()
     with get_conn() as conn:
-        existing = conn.execute("SELECT 1 FROM users WHERE email = %s", (body.email.lower(),)).fetchone()
+        existing = conn.execute("SELECT 1 FROM users WHERE email = %s", (email,)).fetchone()
         if existing:
             raise HTTPException(status.HTTP_409_CONFLICT, "A user with that email already exists")
+        org = conn.execute("SELECT name FROM organizations WHERE id = %s", (org_id,)).fetchone()
+        if not org:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+
+        # No password given (the normal path): the account starts with an unusable
+        # random hash and the user sets a real one by accepting an emailed invite.
+        initial_password = body.password or secrets.token_urlsafe(32)
         r = conn.execute(
             """
             INSERT INTO users (org_id, email, password_hash, name, role, team_id)
             VALUES (%s,%s,%s,%s,%s,%s) RETURNING id
             """,
-            (
-                org_id,
-                body.email.lower(),
-                hash_password(password),
-                body.name,
-                body.role,
-                body.team_id,
-            ),
+            (org_id, email, hash_password(initial_password), body.name, body.role, body.team_id),
         ).fetchone()
+        user_id = str(r["id"])
         # If this user is a manager and assigned to a team, set them as the team's manager.
         if body.role == "manager" and body.team_id:
             conn.execute(
                 "UPDATE teams SET manager_user_id = %s WHERE id = %s AND org_id = %s",
-                (str(r["id"]), body.team_id, org_id),
+                (user_id, body.team_id, org_id),
+            )
+
+        invite_sent = False
+        if not body.password:
+            invite_sent = _issue_invite(
+                conn,
+                user_id=user_id,
+                org_id=org_id,
+                org_name=org["name"],
+                email=email,
+                name=body.name,
+                invited_by=admin.id,
             )
         conn.commit()
-    out = {"id": str(r["id"]), "email": body.email.lower(), "role": body.role}
-    if not body.password:
-        out["temp_password"] = password
-    return out
+    return {"id": user_id, "email": email, "role": body.role, "invite_sent": invite_sent}
+
+
+@router.post("/{org_id}/users/{user_id}/resend-invite")
+def resend_invite(org_id: str, user_id: str, admin: CurrentUser = Depends(require_kpmg_admin)):
+    with get_conn() as conn:
+        user = conn.execute(
+            """
+            SELECT u.name, u.email, o.name AS org_name
+            FROM users u JOIN organizations o ON o.id = u.org_id
+            WHERE u.id = %s AND u.org_id = %s
+            """,
+            (user_id, org_id),
+        ).fetchone()
+        if not user:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        invite_sent = _issue_invite(
+            conn,
+            user_id=user_id,
+            org_id=org_id,
+            org_name=user["org_name"],
+            email=user["email"],
+            name=user["name"],
+            invited_by=admin.id,
+        )
+        conn.commit()
+    return {"invite_sent": invite_sent}

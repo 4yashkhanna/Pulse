@@ -20,6 +20,7 @@ import {
   listTemplates,
   listUsers,
   orgSkillGrants,
+  resendInvite,
   revokeSkill,
   updateOrg,
   uploadDocs,
@@ -785,7 +786,7 @@ function PeopleTab({ orgId }: { orgId: string }) {
   const [addingFor, setAddingFor] = useState<string | null>(null); // team_id or "none"
   const [form, setForm] = useState({ name: "", email: "", role: "employee" });
   const [err, setErr] = useState("");
-  const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null);
+  const [inviteSent, setInviteSent] = useState<{ email: string; delivered: boolean } | null>(null);
 
   function load() {
     listUsers(orgId).then(setUsers);
@@ -798,13 +799,18 @@ function PeopleTab({ orgId }: { orgId: string }) {
     setErr("");
     try {
       const created = await createUser(orgId, { ...form, team_id: teamId });
-      if (created.temp_password) setTempPassword({ email: created.email, password: created.temp_password });
+      setInviteSent({ email: created.email, delivered: created.invite_sent });
       setForm({ name: "", email: "", role: "employee" });
       setAddingFor(null);
       load();
     } catch (e: any) {
       setErr(e.message);
     }
+  }
+
+  async function resend(userId: string) {
+    await resendInvite(orgId, userId);
+    load();
   }
 
   const unassigned = users.filter((u) => !u.team_id);
@@ -876,6 +882,20 @@ function PeopleTab({ orgId }: { orgId: string }) {
                       <span className="text-label-sm text-on-surface-variant ml-2 capitalize">{m.role}</span>
                     </div>
                   </div>
+                  {m.invite_status !== "active" && (
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-label-sm border ${m.invite_status === "expired" ? "bg-error-container/30 text-error border-error/20" : "bg-secondary-container/30 text-secondary border-secondary/20"}`}>
+                        {m.invite_status === "expired" ? "Expired" : "Pending"}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-label-sm text-primary hover:underline"
+                        onClick={() => resend(m.id)}
+                      >
+                        Resend
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
               {members.length === 0 && <li className="muted text-body-sm p-2">No members yet.</li>}
@@ -897,7 +917,7 @@ function PeopleTab({ orgId }: { orgId: string }) {
                 <button className="btn flex-1" style={{ height: 38 }}>Add person</button>
                 <button type="button" className="px-4 rounded border border-outline-variant text-label-sm" onClick={() => setAddingFor(null)}>Cancel</button>
               </div>
-              <div className="text-label-sm text-on-surface-variant">A one-time temporary password is generated — share it securely.</div>
+              <div className="text-label-sm text-on-surface-variant">They'll get an email invite to set their own password.</div>
             </form>
           )}
         </div>
@@ -952,23 +972,24 @@ function PeopleTab({ orgId }: { orgId: string }) {
         </form>
       )}
 
-      {tempPassword && (
-        <div className="card flex items-center gap-4 border border-secondary/40 bg-secondary-container/20">
-          <span className="material-symbols-outlined text-secondary">key</span>
+      {inviteSent && (
+        <div className={`card flex items-center gap-4 border ${inviteSent.delivered ? "border-secondary/40 bg-secondary-container/20" : "border-error/30 bg-error-container/20"}`}>
+          <span className={`material-symbols-outlined ${inviteSent.delivered ? "text-secondary" : "text-error"}`}>mail</span>
           <div className="flex-1">
             <div className="text-body-sm text-on-surface">
-              Temporary password for <strong>{tempPassword.email}</strong>:{" "}
-              <code className="px-2 py-0.5 rounded bg-surface-container font-semibold">{tempPassword.password}</code>
+              {inviteSent.delivered ? (
+                <>Invitation sent to <strong>{inviteSent.email}</strong>.</>
+              ) : (
+                <>Account created for <strong>{inviteSent.email}</strong>, but the invite email failed to send.</>
+              )}
             </div>
-            <div className="text-label-sm text-on-surface-variant mt-0.5">Shown once — copy it now and share it securely. They can change it after signing in.</div>
+            <div className="text-label-sm text-on-surface-variant mt-0.5">
+              {inviteSent.delivered
+                ? "They'll receive an email with a link to set their password."
+                : "Use \"Resend\" next to their name below once email is configured."}
+            </div>
           </div>
-          <button
-            className="px-3 py-1.5 rounded border border-outline-variant text-label-sm hover:bg-surface-container"
-            onClick={() => navigator.clipboard.writeText(tempPassword.password)}
-          >
-            Copy
-          </button>
-          <button className="p-1.5 text-on-surface-variant hover:text-primary" onClick={() => setTempPassword(null)}>
+          <button className="p-1.5 text-on-surface-variant hover:text-primary" onClick={() => setInviteSent(null)}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
           </button>
         </div>

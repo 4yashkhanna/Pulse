@@ -25,6 +25,9 @@ export interface AuthUser {
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
+    // Skip ngrok's free-tier browser-warning interstitial, which otherwise
+    // returns HTML instead of JSON for API calls when tunnelled.
+    "ngrok-skip-browser-warning": "true",
     ...(init.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -52,6 +55,14 @@ export async function login(email: string, password: string) {
   return data.user;
 }
 export const me = () => req<AuthUser>("/auth/me");
+export async function acceptInvite(token: string, new_password: string) {
+  const data = await req<{ token: string; user: AuthUser }>("/auth/accept-invite", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password }),
+  });
+  setToken(data.token);
+  return data.user;
+}
 
 // --- orgs (admin) ---
 export interface Org {
@@ -80,6 +91,7 @@ export interface OrgUser {
   role: string;
   team_id: string | null;
   team_name: string | null;
+  invite_status: "active" | "pending" | "expired";
 }
 export interface Team {
   id: string;
@@ -89,7 +101,12 @@ export interface Team {
 export const listUsers = (orgId: string) =>
   req<OrgUser[]>(`/orgs/${orgId}/users`);
 export const createUser = (orgId: string, body: any) =>
-  req<any>(`/orgs/${orgId}/users`, { method: "POST", body: JSON.stringify(body) });
+  req<{ id: string; email: string; role: string; invite_sent: boolean }>(
+    `/orgs/${orgId}/users`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+export const resendInvite = (orgId: string, userId: string) =>
+  req<{ invite_sent: boolean }>(`/orgs/${orgId}/users/${userId}/resend-invite`, { method: "POST" });
 export const listTeams = (orgId: string) => req<Team[]>(`/orgs/${orgId}/teams`);
 export const createTeam = (orgId: string, body: any) =>
   req<any>(`/orgs/${orgId}/teams`, { method: "POST", body: JSON.stringify(body) });
@@ -186,7 +203,10 @@ export async function sendMessageStream(
   const token = getToken();
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: fd,
   });
   if (!res.ok || !res.body) {

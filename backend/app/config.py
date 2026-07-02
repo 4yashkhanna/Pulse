@@ -64,6 +64,15 @@ class Settings:
                 "CONNECTIONS_SECRET (a Fernet key) must be set when PULSE_ENV=prod."
             )
 
+        # Invite emails, sent via Gmail SMTP (no custom domain needed — Gmail
+        # verifies by login/app-password, not DNS). Generate an app password at
+        # myaccount.google.com/apppasswords (requires 2-Step Verification on).
+        self.smtp_host: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        self.smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_user: str = os.getenv("SMTP_USER", "")
+        self.smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+        self.invite_ttl_hours: int = int(os.getenv("INVITE_TTL_HOURS", "168"))
+
         # Azure (production) — read but unused in the prototype.
         self.azure_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
         self.azure_key: str = os.getenv("AZURE_OPENAI_KEY", "")

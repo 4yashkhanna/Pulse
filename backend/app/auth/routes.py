@@ -1,6 +1,7 @@
-"""Auth routes: login (rate-limited), who-am-I, change password."""
+"""Auth routes: login (rate-limited), who-am-I, change password, accept-invite."""
 from __future__ import annotations
 
+import hashlib
 import time
 from collections import defaultdict, deque
 
@@ -51,6 +52,22 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class AcceptInviteRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+def _user_dict(row) -> dict:
+    return {
+        "id": str(row["id"]),
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "org_id": str(row["org_id"]) if row["org_id"] else None,
+        "team_id": str(row["team_id"]) if row["team_id"] else None,
+    }
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(req: LoginRequest, request: Request):
     client_ip = request.client.host if request.client else "unknown"
@@ -67,17 +84,42 @@ def login(req: LoginRequest, request: Request):
     if not row or not verify_password(req.password, row["password_hash"]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
     token = create_token(str(row["id"]))
-    return LoginResponse(
-        token=token,
-        user={
-            "id": str(row["id"]),
-            "email": row["email"],
-            "name": row["name"],
-            "role": row["role"],
-            "org_id": str(row["org_id"]) if row["org_id"] else None,
-            "team_id": str(row["team_id"]) if row["team_id"] else None,
-        },
-    )
+    return LoginResponse(token=token, user=_user_dict(row))
+
+
+@router.post("/accept-invite", response_model=LoginResponse)
+def accept_invite(req: AcceptInviteRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limited(f"invite:{req.token[:8]}") or _rate_limited(f"ip:{client_ip}"):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts. Wait a minute and try again.",
+        )
+    if len(req.new_password) < 8:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password must be at least 8 characters")
+    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+    with get_conn() as conn:
+        invite = conn.execute(
+            """
+            SELECT id, user_id FROM user_invites
+            WHERE token_hash = %s AND accepted_at IS NULL AND expires_at > now()
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not invite:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This invite link is invalid or has expired")
+        conn.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (hash_password(req.new_password), invite["user_id"]),
+        )
+        conn.execute("UPDATE user_invites SET accepted_at = now() WHERE id = %s", (invite["id"],))
+        row = conn.execute(
+            "SELECT id, email, name, role, org_id, team_id FROM users WHERE id = %s",
+            (invite["user_id"],),
+        ).fetchone()
+        conn.commit()
+    token = create_token(str(row["id"]))
+    return LoginResponse(token=token, user=_user_dict(row))
 
 
 @router.post("/change-password")

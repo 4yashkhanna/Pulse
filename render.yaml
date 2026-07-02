@@ -36,6 +36,16 @@ services:
         sync: false
       - key: BACKEND_BASE_URL
         sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: INVITE_TTL_HOURS
+        value: "168"
 
   - type: web
     name: pulse-frontend

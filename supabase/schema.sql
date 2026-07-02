@@ -45,6 +45,23 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- ---------------------------------------------------------------------------
+-- User invites: an admin-created account starts with an unusable random
+-- password_hash; the user only gets a real password once they accept an
+-- invite via a single-use, time-limited token (stored hashed).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_invites (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id          UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    token_hash      TEXT NOT NULL UNIQUE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    accepted_at     TIMESTAMPTZ,
+    invited_by      UUID REFERENCES users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_invites_user_id ON user_invites(user_id);
+
+-- ---------------------------------------------------------------------------
 -- Knowledge layer (per-org). Documents track each uploaded file.
 -- ---------------------------------------------------------------------------
 -- ---------------------------------------------------------------------------

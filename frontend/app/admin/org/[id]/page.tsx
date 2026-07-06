@@ -778,6 +778,155 @@ function SkillGrantsPanel({ orgId }: { orgId: string }) {
 // --------------------------------------------------------------------------- //
 // People Access
 // --------------------------------------------------------------------------- //
+interface PeopleFormState {
+  name: string;
+  email: string;
+  role: string;
+}
+
+function TeamCard({
+  team,
+  users,
+  members,
+  addingFor,
+  setAddingFor,
+  form,
+  setForm,
+  err,
+  setErr,
+  addUser,
+  resend,
+}: {
+  team: Team | null;
+  users: OrgUser[];
+  members: OrgUser[];
+  addingFor: string | null;
+  setAddingFor: (v: string | null) => void;
+  form: PeopleFormState;
+  setForm: (v: PeopleFormState) => void;
+  err: string;
+  setErr: (v: string) => void;
+  addUser: (e: React.FormEvent, teamId: string | null) => void;
+  resend: (userId: string) => void;
+}) {
+  const lead = team
+    ? users.find((u) => u.id === team.manager_user_id) || members.find((u) => u.role === "manager")
+    : undefined;
+  const key = team ? team.id : "none";
+
+  return (
+    <article className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="p-6 border-b border-outline-variant/50 flex justify-between items-start bg-gradient-to-br from-surface-bright to-surface-container-lowest">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <h3 className="text-headline-md text-primary font-semibold">{team ? team.name : "Unassigned"}</h3>
+            <span className="bg-primary-fixed text-on-primary-fixed-variant px-2 py-0.5 rounded text-label-sm border border-primary-fixed-dim">
+              {members.length} Member{members.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="flex gap-2 flex-wrap mt-2">
+            <span className="px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant text-label-sm border border-outline-variant/30 flex items-center gap-1">
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>design_services</span>
+              {team ? "Team" : "No team assigned"}
+            </span>
+          </div>
+        </div>
+        <span className="material-symbols-outlined text-on-surface-variant">more_vert</span>
+      </div>
+
+      {/* Body */}
+      <div className="p-6 flex-1 flex flex-col gap-6">
+        {/* Lead */}
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col">
+            <span className="text-label-caps text-on-surface-variant mb-2">TEAM LEAD</span>
+            {lead ? (
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-label-sm border-2 border-white shadow-sm">
+                  {initials(lead.name)}
+                </div>
+                <div>
+                  <p className="text-body-md font-medium text-on-surface">{lead.name}</p>
+                  <p className="text-body-sm text-on-surface-variant">{lead.email}</p>
+                </div>
+              </div>
+            ) : (
+              <span className="muted text-body-sm">No manager assigned</span>
+            )}
+          </div>
+        </div>
+
+        {/* Members */}
+        <div className="flex flex-col">
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-label-caps text-on-surface-variant">MEMBERS ({members.length})</span>
+          </div>
+          <ul className="flex flex-col gap-2">
+            {members.map((m) => (
+              <li key={m.id} className="flex items-center justify-between p-2 hover:bg-surface-container-low rounded transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-label-sm font-bold ${m.role === "manager" ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-fixed text-on-tertiary-fixed"}`}>
+                    {initials(m.name)}
+                  </div>
+                  <div>
+                    <span className="text-body-sm text-on-surface">{m.name}</span>
+                    <span className="text-label-sm text-on-surface-variant ml-2 capitalize">{m.role}</span>
+                  </div>
+                </div>
+                {m.invite_status !== "active" && (
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-label-sm border ${m.invite_status === "expired" ? "bg-error-container/30 text-error border-error/20" : "bg-secondary-container/30 text-secondary border-secondary/20"}`}>
+                      {m.invite_status === "expired" ? "Expired" : "Pending"}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-label-sm text-primary hover:underline"
+                      onClick={() => resend(m.id)}
+                    >
+                      Resend
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+            {members.length === 0 && <li className="muted text-body-sm p-2">No members yet.</li>}
+          </ul>
+        </div>
+
+        {/* Inline add-member form */}
+        {addingFor === key && (
+          <form onSubmit={(e) => addUser(e, team ? team.id : null)} className="bg-surface-container-low rounded-lg p-4 flex flex-col gap-2 border border-outline-variant/50">
+            <div className="card-label">Add person {team ? `to ${team.name}` : ""}</div>
+            <input className="input-field w-full" placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <input className="input-field w-full" placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+            <select className="select w-full" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              <option value="employee">Employee</option>
+              <option value="manager">Manager (becomes team lead)</option>
+            </select>
+            {err && <div className="text-error text-label-sm">{err}</div>}
+            <div className="flex gap-2">
+              <button className="btn flex-1" style={{ height: 38 }}>Add person</button>
+              <button type="button" className="px-4 rounded border border-outline-variant text-label-sm" onClick={() => setAddingFor(null)}>Cancel</button>
+            </div>
+            <div className="text-label-sm text-on-surface-variant">They'll get an email invite to set their own password.</div>
+          </form>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t border-outline-variant/30 bg-surface-container-low flex justify-end gap-3">
+        <button
+          className="bg-secondary text-white hover:bg-on-secondary-container px-4 py-2 rounded text-label-sm transition-colors flex items-center gap-2"
+          onClick={() => { setErr(""); setAddingFor(addingFor === key ? null : key); }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span> Add Members
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function PeopleTab({ orgId }: { orgId: string }) {
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -814,126 +963,6 @@ function PeopleTab({ orgId }: { orgId: string }) {
   }
 
   const unassigned = users.filter((u) => !u.team_id);
-
-  function TeamCard({ team }: { team: Team | null }) {
-    const members = team ? users.filter((u) => u.team_id === team.id) : unassigned;
-    const lead = team
-      ? users.find((u) => u.id === team.manager_user_id) || members.find((u) => u.role === "manager")
-      : undefined;
-    const key = team ? team.id : "none";
-
-    return (
-      <article className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="p-6 border-b border-outline-variant/50 flex justify-between items-start bg-gradient-to-br from-surface-bright to-surface-container-lowest">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h3 className="text-headline-md text-primary font-semibold">{team ? team.name : "Unassigned"}</h3>
-              <span className="bg-primary-fixed text-on-primary-fixed-variant px-2 py-0.5 rounded text-label-sm border border-primary-fixed-dim">
-                {members.length} Member{members.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="flex gap-2 flex-wrap mt-2">
-              <span className="px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant text-label-sm border border-outline-variant/30 flex items-center gap-1">
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>design_services</span>
-                {team ? "Team" : "No team assigned"}
-              </span>
-            </div>
-          </div>
-          <span className="material-symbols-outlined text-on-surface-variant">more_vert</span>
-        </div>
-
-        {/* Body */}
-        <div className="p-6 flex-1 flex flex-col gap-6">
-          {/* Lead */}
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-label-caps text-on-surface-variant mb-2">TEAM LEAD</span>
-              {lead ? (
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-label-sm border-2 border-white shadow-sm">
-                    {initials(lead.name)}
-                  </div>
-                  <div>
-                    <p className="text-body-md font-medium text-on-surface">{lead.name}</p>
-                    <p className="text-body-sm text-on-surface-variant">{lead.email}</p>
-                  </div>
-                </div>
-              ) : (
-                <span className="muted text-body-sm">No manager assigned</span>
-              )}
-            </div>
-          </div>
-
-          {/* Members */}
-          <div className="flex flex-col">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-label-caps text-on-surface-variant">MEMBERS ({members.length})</span>
-            </div>
-            <ul className="flex flex-col gap-2">
-              {members.map((m) => (
-                <li key={m.id} className="flex items-center justify-between p-2 hover:bg-surface-container-low rounded transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-label-sm font-bold ${m.role === "manager" ? "bg-secondary-container text-on-secondary-container" : "bg-tertiary-fixed text-on-tertiary-fixed"}`}>
-                      {initials(m.name)}
-                    </div>
-                    <div>
-                      <span className="text-body-sm text-on-surface">{m.name}</span>
-                      <span className="text-label-sm text-on-surface-variant ml-2 capitalize">{m.role}</span>
-                    </div>
-                  </div>
-                  {m.invite_status !== "active" && (
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded-full text-label-sm border ${m.invite_status === "expired" ? "bg-error-container/30 text-error border-error/20" : "bg-secondary-container/30 text-secondary border-secondary/20"}`}>
-                        {m.invite_status === "expired" ? "Expired" : "Pending"}
-                      </span>
-                      <button
-                        type="button"
-                        className="text-label-sm text-primary hover:underline"
-                        onClick={() => resend(m.id)}
-                      >
-                        Resend
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-              {members.length === 0 && <li className="muted text-body-sm p-2">No members yet.</li>}
-            </ul>
-          </div>
-
-          {/* Inline add-member form */}
-          {addingFor === key && (
-            <form onSubmit={(e) => addUser(e, team ? team.id : null)} className="bg-surface-container-low rounded-lg p-4 flex flex-col gap-2 border border-outline-variant/50">
-              <div className="card-label">Add person {team ? `to ${team.name}` : ""}</div>
-              <input className="input-field w-full" placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-              <input className="input-field w-full" placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-              <select className="select w-full" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="employee">Employee</option>
-                <option value="manager">Manager (becomes team lead)</option>
-              </select>
-              {err && <div className="text-error text-label-sm">{err}</div>}
-              <div className="flex gap-2">
-                <button className="btn flex-1" style={{ height: 38 }}>Add person</button>
-                <button type="button" className="px-4 rounded border border-outline-variant text-label-sm" onClick={() => setAddingFor(null)}>Cancel</button>
-              </div>
-              <div className="text-label-sm text-on-surface-variant">They'll get an email invite to set their own password.</div>
-            </form>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-outline-variant/30 bg-surface-container-low flex justify-end gap-3">
-          <button
-            className="bg-secondary text-white hover:bg-on-secondary-container px-4 py-2 rounded text-label-sm transition-colors flex items-center gap-2"
-            onClick={() => { setErr(""); setAddingFor(addingFor === key ? null : key); }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span> Add Members
-          </button>
-        </div>
-      </article>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -998,9 +1027,36 @@ function PeopleTab({ orgId }: { orgId: string }) {
       {/* Bento grid */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {teams.map((t) => (
-          <TeamCard key={t.id} team={t} />
+          <TeamCard
+            key={t.id}
+            team={t}
+            users={users}
+            members={users.filter((u) => u.team_id === t.id)}
+            addingFor={addingFor}
+            setAddingFor={setAddingFor}
+            form={form}
+            setForm={setForm}
+            err={err}
+            setErr={setErr}
+            addUser={addUser}
+            resend={resend}
+          />
         ))}
-        {unassigned.length > 0 && <TeamCard team={null} />}
+        {unassigned.length > 0 && (
+          <TeamCard
+            team={null}
+            users={users}
+            members={unassigned}
+            addingFor={addingFor}
+            setAddingFor={setAddingFor}
+            form={form}
+            setForm={setForm}
+            err={err}
+            setErr={setErr}
+            addUser={addUser}
+            resend={resend}
+          />
+        )}
         {teams.length === 0 && unassigned.length === 0 && (
           <div className="muted col-span-full">No teams or people yet — create a team to get started.</div>
         )}

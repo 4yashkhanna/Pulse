@@ -1,14 +1,20 @@
-"""Auth routes: login (rate-limited), who-am-I, change password, accept-invite."""
+"""Auth routes: login (rate-limited), who-am-I, change password, accept-invite,
+forgot/reset password."""
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
+import logging
+import secrets
 import time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
+from ..config import get_settings
 from ..db import get_conn
+from ..notifications.email import EmailSendError, send_reset_password_email
 from .security import (
     CurrentUser,
     create_token,
@@ -16,6 +22,8 @@ from .security import (
     hash_password,
     verify_password,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -53,6 +61,15 @@ class ChangePasswordRequest(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
@@ -116,6 +133,75 @@ def accept_invite(req: AcceptInviteRequest, request: Request):
         row = conn.execute(
             "SELECT id, email, name, role, org_id, team_id FROM users WHERE id = %s",
             (invite["user_id"],),
+        ).fetchone()
+        conn.commit()
+    token = create_token(str(row["id"]))
+    return LoginResponse(token=token, user=_user_dict(row))
+
+
+@router.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest, request: Request):
+    """Always returns a generic response, whether or not the email exists —
+    prevents leaking which emails have Pulse accounts."""
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limited(f"forgot:{req.email.lower()}") or _rate_limited(f"ip:{client_ip}"):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts. Wait a minute and try again.",
+        )
+    settings = get_settings()
+    with get_conn() as conn:
+        user = conn.execute(
+            "SELECT id, name FROM users WHERE email = %s", (req.email.lower(),)
+        ).fetchone()
+        if user:
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=settings.reset_ttl_hours)
+            conn.execute(
+                "INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (%s,%s,%s)",
+                (user["id"], token_hash, expires_at),
+            )
+            conn.commit()
+            reset_url = f"{settings.frontend_origin}/reset-password?token={token}"
+            if settings.env != "prod":
+                logger.warning("[DEV] reset link for %s: %s", req.email.lower(), reset_url)
+            try:
+                send_reset_password_email(to_email=req.email.lower(), to_name=user["name"], reset_url=reset_url)
+            except EmailSendError as e:
+                logger.warning("reset email failed for %s: %s", req.email.lower(), e)
+    return {"sent": True}
+
+
+@router.post("/reset-password", response_model=LoginResponse)
+def reset_password(req: ResetPasswordRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limited(f"reset:{req.token[:8]}") or _rate_limited(f"ip:{client_ip}"):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts. Wait a minute and try again.",
+        )
+    if len(req.new_password) < 8:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password must be at least 8 characters")
+    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+    with get_conn() as conn:
+        reset = conn.execute(
+            """
+            SELECT id, user_id FROM password_resets
+            WHERE token_hash = %s AND used_at IS NULL AND expires_at > now()
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not reset:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This reset link is invalid or has expired")
+        conn.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (hash_password(req.new_password), reset["user_id"]),
+        )
+        conn.execute("UPDATE password_resets SET used_at = now() WHERE id = %s", (reset["id"],))
+        row = conn.execute(
+            "SELECT id, email, name, role, org_id, team_id FROM users WHERE id = %s",
+            (reset["user_id"],),
         ).fetchone()
         conn.commit()
     token = create_token(str(row["id"]))

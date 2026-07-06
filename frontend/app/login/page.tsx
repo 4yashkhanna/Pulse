@@ -60,7 +60,10 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="text-label-sm text-on-surface-variant mb-1 block">Password</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-label-sm text-on-surface-variant block">Password</label>
+                <a href="/forgot-password" className="text-label-sm text-primary hover:underline">Forgot password?</a>
+              </div>
               <input
                 className="input-field w-full"
                 type="password"

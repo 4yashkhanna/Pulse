@@ -63,6 +63,16 @@ export async function acceptInvite(token: string, new_password: string) {
   setToken(data.token);
   return data.user;
 }
+export const forgotPassword = (email: string) =>
+  req<{ sent: boolean }>("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) });
+export async function resetPassword(token: string, new_password: string) {
+  const data = await req<{ token: string; user: AuthUser }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password }),
+  });
+  setToken(data.token);
+  return data.user;
+}
 
 // --- orgs (admin) ---
 export interface Org {

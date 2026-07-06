@@ -62,6 +62,21 @@ CREATE TABLE IF NOT EXISTS user_invites (
 CREATE INDEX IF NOT EXISTS idx_user_invites_user_id ON user_invites(user_id);
 
 -- ---------------------------------------------------------------------------
+-- Password resets: self-service "forgot password" — single-use, time-limited
+-- token (stored hashed), same pattern as user_invites but user-initiated
+-- rather than admin-initiated.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_resets (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash      TEXT NOT NULL UNIQUE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id);
+
+-- ---------------------------------------------------------------------------
 -- Knowledge layer (per-org). Documents track each uploaded file.
 -- ---------------------------------------------------------------------------
 -- ---------------------------------------------------------------------------

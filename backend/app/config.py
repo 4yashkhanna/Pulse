@@ -71,6 +71,7 @@ class Settings:
         self.brevo_sender_email: str = os.getenv("BREVO_SENDER_EMAIL", "")
         self.brevo_sender_name: str = os.getenv("BREVO_SENDER_NAME", "Pulse")
         self.invite_ttl_hours: int = int(os.getenv("INVITE_TTL_HOURS", "168"))
+        self.reset_ttl_hours: int = int(os.getenv("RESET_TTL_HOURS", "1"))
 
         # Azure (production) — read but unused in the prototype.
         self.azure_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")

@@ -59,6 +59,19 @@ class TeamCreate(BaseModel):
     manager_user_id: str | None = None
 
 
+class TeamUpdate(BaseModel):
+    name: str | None = None
+    manager_user_id: str | None = None
+
+
+class UserUpdate(BaseModel):
+    name: str | None = None
+    role: str | None = None  # employee | manager
+    # Sentinel-friendly: pass team_id explicitly (a team UUID or null to unassign).
+    team_id: str | None = None
+    unassign_team: bool = False
+
+
 # --------------------------------------------------------------------------- #
 # Organizations
 # --------------------------------------------------------------------------- #
@@ -173,6 +186,47 @@ def create_team(org_id: str, body: TeamCreate):
     return {"id": str(r["id"]), "name": body.name}
 
 
+@router.patch("/{org_id}/teams/{team_id}")
+def update_team(org_id: str, team_id: str, body: TeamUpdate):
+    fields, values = [], []
+    if body.name is not None:
+        fields.append("name = %s")
+        values.append(body.name)
+    if body.manager_user_id is not None:
+        fields.append("manager_user_id = %s")
+        values.append(body.manager_user_id)
+    if not fields:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to update")
+    values += [team_id, org_id]
+    with get_conn() as conn:
+        r = conn.execute(
+            f"UPDATE teams SET {', '.join(fields)} WHERE id = %s AND org_id = %s RETURNING id, name, manager_user_id",
+            values,
+        ).fetchone()
+        conn.commit()
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found")
+    return {
+        "id": str(r["id"]),
+        "name": r["name"],
+        "manager_user_id": str(r["manager_user_id"]) if r["manager_user_id"] else None,
+    }
+
+
+@router.delete("/{org_id}/teams/{team_id}")
+def delete_team(org_id: str, team_id: str):
+    """Delete a team. Members are NOT deleted — their team_id becomes NULL
+    (users.team_id is ON DELETE SET NULL), so they show under Unassigned."""
+    with get_conn() as conn:
+        r = conn.execute(
+            "DELETE FROM teams WHERE id = %s AND org_id = %s RETURNING id", (team_id, org_id)
+        ).fetchone()
+        conn.commit()
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found")
+    return {"deleted": True}
+
+
 # --------------------------------------------------------------------------- #
 # Users
 # --------------------------------------------------------------------------- #
@@ -184,9 +238,10 @@ def _invite_status(accepted_at, expires_at) -> str:
     return "expired"
 
 
-def _issue_invite(conn, *, user_id: str, org_id: str, org_name: str, email: str, name: str, invited_by: str) -> bool:
+def _issue_invite(conn, *, user_id: str, org_id: str, org_name: str, email: str, name: str, invited_by: str) -> tuple[bool, str | None]:
     """Expire any prior pending invite for this user, issue a fresh single-use
-    token, and email it. Returns whether the email actually sent."""
+    token, and email it. Returns (sent, error) — error is admin-facing detail
+    on why delivery failed (SMTP misconfig, provider rejection, etc.)."""
     settings = get_settings()
     conn.execute(
         "UPDATE user_invites SET expires_at = now() WHERE user_id = %s AND accepted_at IS NULL",
@@ -207,10 +262,10 @@ def _issue_invite(conn, *, user_id: str, org_id: str, org_name: str, email: str,
         logger.warning("[DEV] invite link for %s: %s", email, invite_url)
     try:
         send_invite_email(to_email=email, to_name=name, org_name=org_name, invite_url=invite_url)
-        return True
+        return True, None
     except EmailSendError as e:
         logger.warning("invite email failed for %s: %s", email, e)
-        return False
+        return False, str(e)
 
 
 @router.get("/{org_id}/users")
@@ -275,9 +330,9 @@ def create_user(org_id: str, body: UserCreate, admin: CurrentUser = Depends(requ
                 (user_id, body.team_id, org_id),
             )
 
-        invite_sent = False
+        invite_sent, invite_error = False, None
         if not body.password:
-            invite_sent = _issue_invite(
+            invite_sent, invite_error = _issue_invite(
                 conn,
                 user_id=user_id,
                 org_id=org_id,
@@ -287,7 +342,13 @@ def create_user(org_id: str, body: UserCreate, admin: CurrentUser = Depends(requ
                 invited_by=admin.id,
             )
         conn.commit()
-    return {"id": user_id, "email": email, "role": body.role, "invite_sent": invite_sent}
+    return {
+        "id": user_id,
+        "email": email,
+        "role": body.role,
+        "invite_sent": invite_sent,
+        "invite_error": invite_error,
+    }
 
 
 @router.post("/{org_id}/users/{user_id}/resend-invite")
@@ -303,7 +364,7 @@ def resend_invite(org_id: str, user_id: str, admin: CurrentUser = Depends(requir
         ).fetchone()
         if not user:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-        invite_sent = _issue_invite(
+        invite_sent, invite_error = _issue_invite(
             conn,
             user_id=user_id,
             org_id=org_id,
@@ -313,4 +374,79 @@ def resend_invite(org_id: str, user_id: str, admin: CurrentUser = Depends(requir
             invited_by=admin.id,
         )
         conn.commit()
-    return {"invite_sent": invite_sent}
+    return {"invite_sent": invite_sent, "invite_error": invite_error}
+
+
+@router.patch("/{org_id}/users/{user_id}")
+def update_user(org_id: str, user_id: str, body: UserUpdate):
+    """Update a member's name, role, or team. Use unassign_team=true to move
+    them out of any team (team_id alone can't express null-vs-omitted)."""
+    if body.role is not None and body.role not in ("employee", "manager"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "role must be employee or manager")
+    fields, values = [], []
+    if body.name is not None:
+        fields.append("name = %s")
+        values.append(body.name)
+    if body.role is not None:
+        fields.append("role = %s")
+        values.append(body.role)
+    if body.unassign_team:
+        fields.append("team_id = NULL")
+    elif body.team_id is not None:
+        fields.append("team_id = %s")
+        values.append(body.team_id)
+    if not fields:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to update")
+    values += [user_id, org_id]
+    with get_conn() as conn:
+        r = conn.execute(
+            f"UPDATE users SET {', '.join(fields)} WHERE id = %s AND org_id = %s RETURNING id, name, role, team_id",
+            values,
+        ).fetchone()
+        if not r:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        # Keep team leadership consistent with the change.
+        if body.role == "manager" and r["team_id"]:
+            conn.execute(
+                "UPDATE teams SET manager_user_id = %s WHERE id = %s AND org_id = %s",
+                (user_id, r["team_id"], org_id),
+            )
+        elif body.role == "employee" or body.unassign_team:
+            conn.execute(
+                "UPDATE teams SET manager_user_id = NULL WHERE manager_user_id = %s AND org_id = %s",
+                (user_id, org_id),
+            )
+        conn.commit()
+    return {
+        "id": str(r["id"]),
+        "name": r["name"],
+        "role": r["role"],
+        "team_id": str(r["team_id"]) if r["team_id"] else None,
+    }
+
+
+@router.delete("/{org_id}/users/{user_id}")
+def delete_user(org_id: str, user_id: str):
+    """Remove a member from the org entirely (their conversations/knowledge
+    cascade per the schema). Cannot remove KPMG admins through this route."""
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT role FROM users WHERE id = %s AND org_id = %s", (user_id, org_id)
+        ).fetchone()
+        if not r:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        if r["role"] == "kpmg_admin":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot remove a KPMG admin")
+        conn.execute(
+            "UPDATE teams SET manager_user_id = NULL WHERE manager_user_id = %s AND org_id = %s",
+            (user_id, org_id),
+        )
+        # These audit-trail FKs have no ON DELETE action — null them so the
+        # delete doesn't hit a constraint violation. The rows themselves stay.
+        conn.execute("UPDATE projects SET created_by = NULL WHERE created_by = %s", (user_id,))
+        conn.execute("UPDATE knowledge_folders SET created_by = NULL WHERE created_by = %s", (user_id,))
+        conn.execute("UPDATE knowledge_documents SET uploaded_by = NULL WHERE uploaded_by = %s", (user_id,))
+        conn.execute("UPDATE user_invites SET invited_by = NULL WHERE invited_by = %s", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = %s AND org_id = %s", (user_id, org_id))
+        conn.commit()
+    return {"deleted": True}

@@ -13,6 +13,8 @@ import {
   createTeam,
   createUser,
   deleteDoc,
+  deleteTeam,
+  deleteUser,
   getOrg,
   grantSkill,
   listDocs,
@@ -23,6 +25,8 @@ import {
   resendInvite,
   revokeSkill,
   updateOrg,
+  updateTeam,
+  updateUser,
   uploadDocs,
 } from "@/lib/api";
 
@@ -106,7 +110,7 @@ function OrgDetail() {
       </header>
 
       <div className="page-canvas">
-        {tab === "Overview" && <OverviewTab org={org} />}
+        {tab === "Overview" && <OverviewTab org={org} onManagePeople={() => setTab("People Access")} />}
         {tab === "Knowledge" && <KnowledgeTab org={org} onSaved={setOrg} />}
         {tab === "Pulse Config" && <ConfigTab org={org} onSaved={setOrg} />}
         {tab === "People Access" && <PeopleTab orgId={id} />}
@@ -118,16 +122,23 @@ function OrgDetail() {
 // --------------------------------------------------------------------------- //
 // Overview
 // --------------------------------------------------------------------------- //
-function OverviewTab({ org }: { org: Org }) {
+function OverviewTab({ org, onManagePeople }: { org: Org; onManagePeople: () => void }) {
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [docs, setDocs] = useState<KDoc[]>([]);
   const [filter, setFilter] = useState("");
+  const [showNewTeam, setShowNewTeam] = useState(false);
+  const [teamName, setTeamName] = useState("");
 
-  useEffect(() => {
+  function loadPeople() {
     listUsers(org.id).then(setUsers).catch(() => {});
     listTeams(org.id).then(setTeams).catch(() => {});
+  }
+
+  useEffect(() => {
+    loadPeople();
     listDocs(org.id).then(setDocs).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org.id]);
 
   const managers = users.filter((u) => u.role === "manager");
@@ -238,18 +249,54 @@ function OverviewTab({ org }: { org: Org }) {
 
       {/* Team Management table */}
       <div className="bg-surface-container-lowest border border-surface-variant rounded-lg shadow-ambient overflow-hidden flex flex-col">
-        <div className="p-stack-md border-b border-surface-variant flex justify-between items-center">
+        <div className="p-stack-md border-b border-surface-variant flex justify-between items-center gap-3 flex-wrap">
           <h3 className="text-headline-md text-on-surface">Team Management</h3>
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: 18 }}>filter_list</span>
-            <input
-              className="pl-9 pr-4 py-1.5 bg-surface-container-low border border-outline-variant rounded text-body-sm focus:outline-none focus:ring-1 focus:ring-pulse-teal-vibrant w-48"
-              placeholder="Filter teams..."
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: 18 }}>filter_list</span>
+              <input
+                className="pl-9 pr-4 py-1.5 bg-surface-container-low border border-outline-variant rounded text-body-sm focus:outline-none focus:ring-1 focus:ring-pulse-teal-vibrant w-48"
+                placeholder="Filter teams..."
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            </div>
+            <button
+              className="btn-outline flex items-center gap-1.5"
+              style={{ height: 34 }}
+              onClick={() => setShowNewTeam((s) => !s)}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span> New team
+            </button>
+            <button
+              className="btn flex items-center gap-1.5"
+              style={{ height: 34 }}
+              onClick={onManagePeople}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>group</span> Manage people
+            </button>
           </div>
         </div>
+        {showNewTeam && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!teamName.trim()) return;
+              await createTeam(org.id, { name: teamName.trim() });
+              setTeamName("");
+              setShowNewTeam(false);
+              loadPeople();
+            }}
+            className="p-stack-md border-b border-surface-variant flex gap-3 items-end bg-surface-container-low"
+          >
+            <div className="flex-1" style={{ maxWidth: 360 }}>
+              <div className="card-label">Team name</div>
+              <input className="input-field w-full" placeholder="e.g. Core UX Team" value={teamName} onChange={(e) => setTeamName(e.target.value)} autoFocus required />
+            </div>
+            <button className="btn" style={{ height: 40 }}>Create</button>
+            <button type="button" className="px-4 rounded border border-outline-variant text-label-sm" style={{ height: 40 }} onClick={() => setShowNewTeam(false)}>Cancel</button>
+          </form>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -291,7 +338,7 @@ function OverviewTab({ org }: { org: Org }) {
                 </tr>
               ))}
               {teamRows.length === 0 && (
-                <tr><td className="p-4 muted" colSpan={4}>No teams yet — create one in People Access.</td></tr>
+                <tr><td className="p-4 muted" colSpan={4}>No teams yet — use “New team” above to create one.</td></tr>
               )}
             </tbody>
           </table>
@@ -784,9 +831,49 @@ interface PeopleFormState {
   role: string;
 }
 
+/** Minimal dropdown: fixed transparent overlay closes it on any outside click. */
+function Dropdown({ open, onClose, children, align = "right" }: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  if (!open) return null;
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        className={`absolute z-50 mt-1 min-w-48 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg py-1 ${align === "right" ? "right-0" : "left-0"}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
+function MenuItem({ icon, label, danger, onClick }: {
+  icon: string;
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`w-full text-left px-3 py-2 text-body-sm flex items-center gap-2 hover:bg-surface-container-low transition-colors ${danger ? "text-error" : "text-on-surface"}`}
+      onClick={onClick}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
 function TeamCard({
   team,
   users,
+  teams,
   members,
   addingFor,
   setAddingFor,
@@ -796,9 +883,15 @@ function TeamCard({
   setErr,
   addUser,
   resend,
+  onRenameTeam,
+  onDeleteTeam,
+  onChangeRole,
+  onMoveUser,
+  onRemoveUser,
 }: {
   team: Team | null;
   users: OrgUser[];
+  teams: Team[];
   members: OrgUser[];
   addingFor: string | null;
   setAddingFor: (v: string | null) => void;
@@ -808,19 +901,51 @@ function TeamCard({
   setErr: (v: string) => void;
   addUser: (e: React.FormEvent, teamId: string | null) => void;
   resend: (userId: string) => void;
+  onRenameTeam: (team: Team, name: string) => Promise<void>;
+  onDeleteTeam: (team: Team) => Promise<void>;
+  onChangeRole: (m: OrgUser) => Promise<void>;
+  onMoveUser: (m: OrgUser, teamId: string | null) => Promise<void>;
+  onRemoveUser: (m: OrgUser) => Promise<void>;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [memberMenu, setMemberMenu] = useState<string | null>(null);
+
   const lead = team
     ? users.find((u) => u.id === team.manager_user_id) || members.find((u) => u.role === "manager")
     : undefined;
   const key = team ? team.id : "none";
 
+  async function submitRename(e: React.FormEvent) {
+    e.preventDefault();
+    if (!team || !newName.trim()) return;
+    await onRenameTeam(team, newName.trim());
+    setRenaming(false);
+  }
+
   return (
     <article className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm flex flex-col overflow-hidden">
       {/* Header */}
       <div className="p-6 border-b border-outline-variant/50 flex justify-between items-start bg-gradient-to-br from-surface-bright to-surface-container-lowest">
-        <div>
+        <div className="flex-1">
           <div className="flex items-center gap-3 mb-2">
-            <h3 className="text-headline-md text-primary font-semibold">{team ? team.name : "Unassigned"}</h3>
+            {renaming && team ? (
+              <form onSubmit={submitRename} className="flex items-center gap-2">
+                <input
+                  className="input-field"
+                  style={{ height: 36 }}
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  autoFocus
+                  required
+                />
+                <button className="btn" style={{ height: 36 }}>Save</button>
+                <button type="button" className="px-3 rounded border border-outline-variant text-label-sm" style={{ height: 36 }} onClick={() => setRenaming(false)}>Cancel</button>
+              </form>
+            ) : (
+              <h3 className="text-headline-md text-primary font-semibold">{team ? team.name : "Unassigned"}</h3>
+            )}
             <span className="bg-primary-fixed text-on-primary-fixed-variant px-2 py-0.5 rounded text-label-sm border border-primary-fixed-dim">
               {members.length} Member{members.length === 1 ? "" : "s"}
             </span>
@@ -832,7 +957,35 @@ function TeamCard({
             </span>
           </div>
         </div>
-        <span className="material-symbols-outlined text-on-surface-variant">more_vert</span>
+        {team && (
+          <div className="relative">
+            <button
+              type="button"
+              className="p-1.5 rounded-full hover:bg-surface-container-low transition-colors text-on-surface-variant"
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <span className="material-symbols-outlined">more_vert</span>
+            </button>
+            <Dropdown open={menuOpen} onClose={() => setMenuOpen(false)}>
+              <MenuItem
+                icon="edit"
+                label="Rename team"
+                onClick={() => { setMenuOpen(false); setNewName(team.name); setRenaming(true); }}
+              />
+              <MenuItem
+                icon="delete"
+                label="Delete team"
+                danger
+                onClick={async () => {
+                  setMenuOpen(false);
+                  if (window.confirm(`Delete team "${team.name}"? Members are kept and moved to Unassigned.`)) {
+                    await onDeleteTeam(team);
+                  }
+                }}
+              />
+            </Dropdown>
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -872,22 +1025,67 @@ function TeamCard({
                   <div>
                     <span className="text-body-sm text-on-surface">{m.name}</span>
                     <span className="text-label-sm text-on-surface-variant ml-2 capitalize">{m.role}</span>
+                    <div className="text-label-sm text-on-surface-variant">{m.email}</div>
                   </div>
                 </div>
-                {m.invite_status !== "active" && (
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded-full text-label-sm border ${m.invite_status === "expired" ? "bg-error-container/30 text-error border-error/20" : "bg-secondary-container/30 text-secondary border-secondary/20"}`}>
-                      {m.invite_status === "expired" ? "Expired" : "Pending"}
-                    </span>
+                <div className="flex items-center gap-2">
+                  {m.invite_status !== "active" && (
+                    <>
+                      <span className={`px-2 py-0.5 rounded-full text-label-sm border ${m.invite_status === "expired" ? "bg-error-container/30 text-error border-error/20" : "bg-secondary-container/30 text-secondary border-secondary/20"}`}>
+                        {m.invite_status === "expired" ? "Expired" : "Pending"}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-label-sm text-primary hover:underline"
+                        onClick={() => resend(m.id)}
+                      >
+                        Resend
+                      </button>
+                    </>
+                  )}
+                  <div className="relative">
                     <button
                       type="button"
-                      className="text-label-sm text-primary hover:underline"
-                      onClick={() => resend(m.id)}
+                      className="p-1 rounded-full hover:bg-surface-container transition-colors text-on-surface-variant"
+                      onClick={() => setMemberMenu(memberMenu === m.id ? null : m.id)}
                     >
-                      Resend
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>more_vert</span>
                     </button>
+                    <Dropdown open={memberMenu === m.id} onClose={() => setMemberMenu(null)}>
+                      <MenuItem
+                        icon={m.role === "manager" ? "person" : "supervisor_account"}
+                        label={m.role === "manager" ? "Make employee" : "Make manager (team lead)"}
+                        onClick={async () => { setMemberMenu(null); await onChangeRole(m); }}
+                      />
+                      {teams.filter((t) => t.id !== m.team_id).map((t) => (
+                        <MenuItem
+                          key={t.id}
+                          icon="arrow_forward"
+                          label={`Move to ${t.name}`}
+                          onClick={async () => { setMemberMenu(null); await onMoveUser(m, t.id); }}
+                        />
+                      ))}
+                      {m.team_id && (
+                        <MenuItem
+                          icon="person_remove"
+                          label="Remove from team"
+                          onClick={async () => { setMemberMenu(null); await onMoveUser(m, null); }}
+                        />
+                      )}
+                      <MenuItem
+                        icon="delete"
+                        label="Remove from organization"
+                        danger
+                        onClick={async () => {
+                          setMemberMenu(null);
+                          if (window.confirm(`Remove ${m.name} (${m.email}) from the organization? Their conversations and personal knowledge are deleted.`)) {
+                            await onRemoveUser(m);
+                          }
+                        }}
+                      />
+                    </Dropdown>
                   </div>
-                )}
+                </div>
               </li>
             ))}
             {members.length === 0 && <li className="muted text-body-sm p-2">No members yet.</li>}
@@ -935,7 +1133,7 @@ function PeopleTab({ orgId }: { orgId: string }) {
   const [addingFor, setAddingFor] = useState<string | null>(null); // team_id or "none"
   const [form, setForm] = useState({ name: "", email: "", role: "employee" });
   const [err, setErr] = useState("");
-  const [inviteSent, setInviteSent] = useState<{ email: string; delivered: boolean } | null>(null);
+  const [inviteSent, setInviteSent] = useState<{ email: string; delivered: boolean; error?: string | null } | null>(null);
 
   function load() {
     listUsers(orgId).then(setUsers);
@@ -948,7 +1146,7 @@ function PeopleTab({ orgId }: { orgId: string }) {
     setErr("");
     try {
       const created = await createUser(orgId, { ...form, team_id: teamId });
-      setInviteSent({ email: created.email, delivered: created.invite_sent });
+      setInviteSent({ email: created.email, delivered: created.invite_sent, error: created.invite_error });
       setForm({ name: "", email: "", role: "employee" });
       setAddingFor(null);
       load();
@@ -958,7 +1156,34 @@ function PeopleTab({ orgId }: { orgId: string }) {
   }
 
   async function resend(userId: string) {
-    await resendInvite(orgId, userId);
+    const user = users.find((u) => u.id === userId);
+    const res = await resendInvite(orgId, userId);
+    setInviteSent({ email: user?.email || "", delivered: res.invite_sent, error: res.invite_error });
+    load();
+  }
+
+  async function onRenameTeam(team: Team, name: string) {
+    await updateTeam(orgId, team.id, { name });
+    load();
+  }
+
+  async function onDeleteTeam(team: Team) {
+    await deleteTeam(orgId, team.id);
+    load();
+  }
+
+  async function onChangeRole(m: OrgUser) {
+    await updateUser(orgId, m.id, { role: m.role === "manager" ? "employee" : "manager" });
+    load();
+  }
+
+  async function onMoveUser(m: OrgUser, teamId: string | null) {
+    await updateUser(orgId, m.id, teamId ? { team_id: teamId } : { unassign_team: true });
+    load();
+  }
+
+  async function onRemoveUser(m: OrgUser) {
+    await deleteUser(orgId, m.id);
     load();
   }
 
@@ -1017,6 +1242,9 @@ function PeopleTab({ orgId }: { orgId: string }) {
                 ? "They'll receive an email with a link to set their password."
                 : "Use \"Resend\" next to their name below once email is configured."}
             </div>
+            {!inviteSent.delivered && inviteSent.error && (
+              <div className="text-label-sm text-error mt-1 font-mono">{inviteSent.error}</div>
+            )}
           </div>
           <button className="p-1.5 text-on-surface-variant hover:text-primary" onClick={() => setInviteSent(null)}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
@@ -1031,6 +1259,7 @@ function PeopleTab({ orgId }: { orgId: string }) {
             key={t.id}
             team={t}
             users={users}
+            teams={teams}
             members={users.filter((u) => u.team_id === t.id)}
             addingFor={addingFor}
             setAddingFor={setAddingFor}
@@ -1040,12 +1269,18 @@ function PeopleTab({ orgId }: { orgId: string }) {
             setErr={setErr}
             addUser={addUser}
             resend={resend}
+            onRenameTeam={onRenameTeam}
+            onDeleteTeam={onDeleteTeam}
+            onChangeRole={onChangeRole}
+            onMoveUser={onMoveUser}
+            onRemoveUser={onRemoveUser}
           />
         ))}
         {unassigned.length > 0 && (
           <TeamCard
             team={null}
             users={users}
+            teams={teams}
             members={unassigned}
             addingFor={addingFor}
             setAddingFor={setAddingFor}
@@ -1055,6 +1290,11 @@ function PeopleTab({ orgId }: { orgId: string }) {
             setErr={setErr}
             addUser={addUser}
             resend={resend}
+            onRenameTeam={onRenameTeam}
+            onDeleteTeam={onDeleteTeam}
+            onChangeRole={onChangeRole}
+            onMoveUser={onMoveUser}
+            onRemoveUser={onRemoveUser}
           />
         )}
         {teams.length === 0 && unassigned.length === 0 && (

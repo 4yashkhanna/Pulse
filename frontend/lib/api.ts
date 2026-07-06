@@ -101,15 +101,32 @@ export interface Team {
 export const listUsers = (orgId: string) =>
   req<OrgUser[]>(`/orgs/${orgId}/users`);
 export const createUser = (orgId: string, body: any) =>
-  req<{ id: string; email: string; role: string; invite_sent: boolean }>(
+  req<{ id: string; email: string; role: string; invite_sent: boolean; invite_error: string | null }>(
     `/orgs/${orgId}/users`,
     { method: "POST", body: JSON.stringify(body) },
   );
 export const resendInvite = (orgId: string, userId: string) =>
-  req<{ invite_sent: boolean }>(`/orgs/${orgId}/users/${userId}/resend-invite`, { method: "POST" });
+  req<{ invite_sent: boolean; invite_error: string | null }>(
+    `/orgs/${orgId}/users/${userId}/resend-invite`,
+    { method: "POST" },
+  );
+export const updateUser = (
+  orgId: string,
+  userId: string,
+  body: { name?: string; role?: string; team_id?: string; unassign_team?: boolean },
+) => req<any>(`/orgs/${orgId}/users/${userId}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteUser = (orgId: string, userId: string) =>
+  req<{ deleted: boolean }>(`/orgs/${orgId}/users/${userId}`, { method: "DELETE" });
 export const listTeams = (orgId: string) => req<Team[]>(`/orgs/${orgId}/teams`);
 export const createTeam = (orgId: string, body: any) =>
   req<any>(`/orgs/${orgId}/teams`, { method: "POST", body: JSON.stringify(body) });
+export const updateTeam = (
+  orgId: string,
+  teamId: string,
+  body: { name?: string; manager_user_id?: string },
+) => req<Team>(`/orgs/${orgId}/teams/${teamId}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteTeam = (orgId: string, teamId: string) =>
+  req<{ deleted: boolean }>(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE" });
 
 // --- knowledge (admin) ---
 export interface KDoc {

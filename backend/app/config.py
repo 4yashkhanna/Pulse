@@ -64,13 +64,12 @@ class Settings:
                 "CONNECTIONS_SECRET (a Fernet key) must be set when PULSE_ENV=prod."
             )
 
-        # Invite emails, sent via Gmail SMTP (no custom domain needed — Gmail
-        # verifies by login/app-password, not DNS). Generate an app password at
-        # myaccount.google.com/apppasswords (requires 2-Step Verification on).
-        self.smtp_host: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        self.smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
-        self.smtp_user: str = os.getenv("SMTP_USER", "")
-        self.smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+        # Invite emails, sent via Brevo's HTTP API (not SMTP — Render's free tier
+        # blocks outbound SMTP ports 25/465/587, but HTTPS/443 is unrestricted).
+        # Get an API key from Brevo dashboard -> Settings -> SMTP & API -> API Keys.
+        self.brevo_api_key: str = os.getenv("BREVO_API_KEY", "")
+        self.brevo_sender_email: str = os.getenv("BREVO_SENDER_EMAIL", "")
+        self.brevo_sender_name: str = os.getenv("BREVO_SENDER_NAME", "Pulse")
         self.invite_ttl_hours: int = int(os.getenv("INVITE_TTL_HOURS", "168"))
 
         # Azure (production) — read but unused in the prototype.

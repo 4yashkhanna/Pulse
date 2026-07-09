@@ -123,15 +123,16 @@ html.sidebar-collapsed .sidebar-nav-item.active {
 }
 .sidebar-thread {
   @apply flex items-start gap-3 px-3 py-2 rounded text-body-sm cursor-pointer transition-colors duration-150;
-  color: rgba(255,255,255,0.45);
+  color: rgba(26,28,30,0.75);
 }
 .sidebar-thread:hover {
-  background: rgba(255,255,255,0.06);
-  color: #fff;
+  background: rgba(0,0,0,0.05);
+  color: #1a1c1e;
 }
 .sidebar-thread.active {
-  background: rgba(0,51,141,0.5);
-  color: #7df5f3;
+  background: rgba(0,51,141,0.1);
+  color: #00338d;
+  font-weight: 600;
 }
 
 /* ─── Top bar ───────────────────────────────────────────────────────── */

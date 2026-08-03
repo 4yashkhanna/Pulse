@@ -24,7 +24,15 @@ def _org_settings(org_id: str) -> dict:
 
 @router.get("/me")
 def my_dashboard(user: CurrentUser = Depends(require_org_user)):
-    """The current user's own individual dashboard."""
+    """The current user's own individual dashboard.
+    Employees get an encouragement-focused view — no polarity scores or signal labels.
+    Managers get the full analytical view."""
+    if user.role == "employee":
+        return {
+            "view": "encouragement",
+            "role": user.role,
+            **metrics.encouragement_view(user.org_id, user.id, user.name),  # type: ignore[arg-type]
+        }
     return {
         "view": "individual",
         "role": user.role,

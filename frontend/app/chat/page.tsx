@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Guard from "@/components/Guard";
+import { useAuth } from "@/lib/auth";
 import MessageContent from "@/components/MessageContent";
 import ArtifactPanel, { Artifact, artifactTitle } from "@/components/ArtifactPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -40,6 +41,8 @@ interface Msg {
 }
 
 function Chat() {
+  const { user } = useAuth();
+  const isEmployee = user?.role === "employee";
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -280,9 +283,13 @@ function Chat() {
                   <div
                     key={c.id}
                     onClick={() => openConversation(c.id)}
-                    className={`sidebar-thread ${c.id === activeId ? "active" : ""}`}
+                    className={`group flex items-start gap-2 px-3 py-2 rounded-lg text-body-sm cursor-pointer transition-colors ${
+                      c.id === activeId
+                        ? "bg-primary/10 text-primary font-semibold"
+                        : "text-on-surface hover:bg-surface-container"
+                    }`}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16, marginTop: 2 }}>chat_bubble</span>
+                    <span className="material-symbols-outlined text-on-surface-variant shrink-0" style={{ fontSize: 15, marginTop: 2 }}>chat_bubble</span>
                     <span className="flex-1 truncate">{c.title}</span>
                     <span
                       onClick={async (e) => {
@@ -291,8 +298,8 @@ function Chat() {
                         if (c.id === activeId) newChat();
                         loadConvos();
                       }}
-                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error text-sm cursor-pointer"
-                      style={{ fontSize: 14 }}
+                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error cursor-pointer shrink-0"
+                      style={{ fontSize: 16 }}
                     >
                       ×
                     </span>
@@ -523,7 +530,7 @@ function Chat() {
             </>
           ) : (
             <>
-              {lastReply?.tag && (
+              {lastReply?.tag && !isEmployee && (
                 <div className="card">
                   <div className="card-label">Turn measurement</div>
                   <div className="flex flex-wrap gap-2 mb-3">
@@ -538,13 +545,54 @@ function Chat() {
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-label-sm font-semibold ${s.polarity > 0 ? "bg-secondary-container/30 text-on-secondary-container" : "bg-error-container/30 text-error"}`}>
                             {s.polarity > 0 ? "▲" : "▼"} {s.pillar}
                           </span>
-                          {s.evidence && <div className="muted mt-1 italic">"{s.evidence}"</div>}
+                          {s.evidence && <div className="muted mt-1 italic">&ldquo;{s.evidence}&rdquo;</div>}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
               )}
+              {lastReply?.tag && isEmployee && (() => {
+                const tag = lastReply.tag!;
+                const positives = (tag.fired_signals ?? []).filter((s) => s.polarity > 0);
+                const PHASE_TIPS: Record<string, string> = {
+                  empathy: "Try talking directly with a user next — even a short conversation surfaces things you didn't know you didn't know.",
+                  define: "Synthesising findings into a sharp 'How Might We' statement before ideating keeps things focused.",
+                  ideate: "Push for quantity before quality in your next session — the 10th idea is usually the most interesting.",
+                  prototype: "Even a rough sketch shared early can save hours of work later.",
+                  test: "Sharing something rough with one real user for 30 minutes beats weeks of assumption-making.",
+                };
+                const tip = PHASE_TIPS[tag.phase] ?? "Keep exploring the full design process — each phase builds on the last.";
+                let headline = "Good session — keep it up!";
+                if (tag.evidence_backed && (tag.quality_score ?? 0) >= 0.65) {
+                  headline = "Strong turn — your thinking was clear and evidence-backed.";
+                } else if (tag.evidence_backed) {
+                  headline = "Good work backing your thinking with real evidence.";
+                } else if ((tag.quality_score ?? 0) >= 0.65) {
+                  headline = "Strong thinking this session — well structured.";
+                } else if (positives.length > 0) {
+                  headline = "Good session — there's some solid thinking here.";
+                }
+                return (
+                  <div className="card">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="material-symbols-outlined text-pulse-teal-vibrant" style={{ fontSize: 20 }}>auto_awesome</span>
+                      <div className="card-label mb-0">Coaching note</div>
+                    </div>
+                    <p className="text-body-sm text-on-surface font-medium mb-3">{headline}</p>
+                    {positives.length > 0 && (
+                      <div className="bg-secondary-container/20 border border-secondary-container/40 rounded-lg px-3 py-2 mb-3">
+                        <p className="text-label-caps text-on-surface-variant mb-1">What stood out</p>
+                        <p className="text-body-sm text-on-surface">{positives[0].text}</p>
+                      </div>
+                    )}
+                    <div className="border-t border-surface-container-high pt-3">
+                      <p className="text-label-caps text-on-surface-variant mb-1">Try this next</p>
+                      <p className="text-body-sm text-on-surface-variant">{tip}</p>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="card">
                 <div className="card-label">Knowledge retrieved</div>
                 {!lastReply?.retrieved?.length && <div className="muted">Sources used will appear here.</div>}

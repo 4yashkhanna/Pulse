@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "backend/.venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--reload", "--port", "8000", "--app-dir", "backend"],
+      "port": 8000
     }
   ]
 }

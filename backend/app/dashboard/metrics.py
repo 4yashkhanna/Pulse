@@ -13,6 +13,53 @@ from ..db import get_conn
 
 MIN_EVIDENCE = 3
 
+# Employee-facing rewrites of positive signals — encouraging, no jargon, no polarity labels
+_POSITIVE_REWRITES: dict[str, str] = {
+    "VAL-1": "You're comfortable working with open-ended problems — that's a real strength in design.",
+    "VAL-3": "You're willing to take on unconventional ideas and accept some risk to find better solutions.",
+    "VAL-4": "Your work stays grounded in real user needs, not just internal assumptions.",
+    "VAL-6": "You're actively involving or observing real users in your process.",
+    "VAL-7": "You consistently put yourself in the user's shoes — strong empathy in action.",
+    "VAL-8": "You treat every challenge as a chance to learn something new.",
+    "VAL-9": "You see setbacks as learning opportunities — that's a genuine growth mindset.",
+    "BEH-1": "You're thinking about the bigger picture and how things connect downstream.",
+    "BEH-3": "You're not just solving problems — you're questioning whether you're solving the right ones.",
+    "BEH-5": "You challenge assumptions, including your own. That's sharp, rigorous thinking.",
+    "BEH-6": "You pressure-test your own ideas before moving forward — a sign of intellectual honesty.",
+    "BEH-7": "You generate multiple possibilities before committing — that's strong ideation.",
+    "BEH-9": "You reason toward future possibilities, not just what's in front of you right now.",
+    "CLI-1": "You're drawing on team knowledge and factoring in group input effectively.",
+    "CLI-2": "You're building and sharing knowledge with your teammates.",
+    "CLI-3": "You bring in perspectives from other disciplines — a great collaborative instinct.",
+    "CLI-5": "You're genuinely open to changing your mind when presented with new information.",
+    "CLI-7": "You see diverse perspectives as an asset that improves the outcome.",
+    "CLI-8": "You're comfortable raising bold or dissenting ideas in the group — that takes real confidence.",
+    "PRO-1": "You have a clear sense of where you are in the design process at any given moment.",
+    "PRO-2": "You recognise when to iterate and go deeper in a phase rather than rushing ahead.",
+    "PRO-4": "You test things in small steps rather than over-committing to one direction.",
+    "PRO-5": "You favour making things concrete — ideas become real in your hands.",
+    "PRO-7": "You turn hypotheses into testable things quickly — bias toward action.",
+    "PRO-8": "You keep multiple options alive at the right moments — smart at this stage.",
+    "PRO-10": "You can foresee different outcomes and adjust your direction accordingly.",
+    "SUC-1": "You approach open, ambiguous problems with confidence.",
+    "SUC-2": "You articulate the value and impact your work should create.",
+    "SUC-3": "You tie your work to measurable outcomes — that's how progress becomes visible.",
+    "SUC-5": "You stay constructively optimistic even when things get difficult.",
+    "SUC-6": "You validate results with evidence rather than just declaring victory at launch.",
+    "RES-1": "You have a clear sense of what skills the work requires.",
+    "RES-2": "You make sure you have the research and data the work actually needs.",
+    "RES-3": "You're thoughtful about the tools and systems that support your design work.",
+    "RES-6": "You maintain clear project structure and a sense of ownership.",
+}
+
+_PHASE_TIPS: dict[str, str] = {
+    "empathy": "Try carving out time to speak directly with a user or stakeholder — even a 20-minute conversation can surface assumptions you didn't know you had.",
+    "define": "Synthesise your findings into a sharp 'How Might We' statement before ideating. A focused problem statement makes everything downstream faster.",
+    "ideate": "Push quantity before quality in your next ideation session — the 10th idea is usually more interesting than the 1st.",
+    "prototype": "Even a rough sketch or paper mock can validate an assumption faster than hours of discussion. Try building something low-fidelity and sharing it.",
+    "test": "Sharing a rough prototype with one real user for 30 minutes will teach you more than almost anything else. It's worth the discomfort.",
+}
+
 
 def _signal_counts(where: str, params: tuple) -> dict[str, dict[str, int]]:
     """{pillar: {'pos': p, 'neg': n}} from interaction_signals."""
@@ -144,6 +191,55 @@ def individual_view(org_id: str, user_id: str, name: str | None = None) -> dict:
         "usage_breakdown": {r["usage_type"]: int(r["n"]) for r in usage},
         **_totals(int_where, int_params),
         **_baseline(org_id),
+    }
+
+
+def encouragement_view(org_id: str, user_id: str, name: str | None = None) -> dict:
+    """Employee-facing view: encouragement-only — no polarity scores, no signal labels.
+    Returns positive observations (reworded), activity stats, and one actionable tip."""
+    sig_where = "org_id = %s AND user_id = %s AND polarity > 0"
+    sig_params = (org_id, user_id)
+    int_where, int_params = "org_id = %s AND user_id = %s", (org_id, user_id)
+
+    with get_conn() as conn:
+        pos_rows = conn.execute(
+            f"SELECT signal_id, COUNT(*) AS n FROM interaction_signals WHERE {sig_where} GROUP BY signal_id ORDER BY n DESC LIMIT 8",
+            sig_params,
+        ).fetchall()
+
+    observations: list[str] = []
+    for r in pos_rows:
+        text = _POSITIVE_REWRITES.get(r["signal_id"])
+        if text and text not in observations:
+            observations.append(text)
+        if len(observations) >= 3:
+            break
+
+    phases = _phase_counts(int_where, int_params)
+    active_phases = [ph for ph, n in phases.items() if n > 0]
+    # Tip comes from the least-explored phase (most likely to benefit from focus)
+    least_used = min(phases, key=phases.get) if phases else None
+    coaching_tip = _PHASE_TIPS.get(least_used) if least_used else None
+
+    totals = _totals(int_where, int_params)
+
+    # Month-to-date sessions
+    with get_conn() as conn:
+        month_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM interactions WHERE org_id=%s AND user_id=%s AND created_at >= date_trunc('month', now())",
+            (org_id, user_id),
+        ).fetchone()
+    sessions_this_month = int(month_row["n"] or 0)
+
+    return {
+        "name": name,
+        "total_interactions": totals["total_interactions"],
+        "evidence_rate": totals["evidence_rate"],
+        "active_phases": len(active_phases),
+        "sessions_this_month": sessions_this_month,
+        "phase_detail": phases,
+        "positive_observations": observations,
+        "coaching_tip": coaching_tip,
     }
 
 

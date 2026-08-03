@@ -55,7 +55,8 @@ def _org_config(conn, org_id: str) -> dict:
 
 def _history(conn, conversation_id: str) -> list[dict]:
     rows = conn.execute(
-        "SELECT role, content FROM messages WHERE conversation_id = %s ORDER BY created_at",
+        "SELECT role, content FROM messages WHERE conversation_id = %s "
+        "ORDER BY created_at, (role = 'assistant')",
         (conversation_id,),
     ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in rows]
@@ -167,33 +168,38 @@ def _mcp_reply(
     user_id: str,
     attachments: list[tuple[str, bytes, str]],
 ) -> tuple[str, list[str]] | None:
-    """Tool-augmented reply when the user has connected tools.
+    """Tool-augmented reply when the user has connected tools (non-streaming, legacy /chat).
 
-    Opens MCP sessions for the user's connected providers, appends the tool note to the
-    system prompt, and runs one tool-aware generation. Returns (reply, tools_used), or
-    None if no tools could be opened (caller falls back to the normal text path).
+    Hands the model the cached tool menu and lets it decide whether any tool is needed; a
+    provider's MCP server is only contacted if the model actually calls one. Returns
+    (reply, tools_used), or None if the user has no reachable tools (caller falls back to
+    the normal text path).
 
-    Runs the async MCP stack via asyncio.run — safe here because the streaming route
-    drives this generator in a threadpool with no running event loop.
+    Runs the async MCP stack via asyncio.run — safe here because the streaming route drives
+    this generator in a threadpool with no running event loop.
     """
     import asyncio
 
-    from ..connections.mcp_client import open_user_tools
+    from ..connections.mcp_client import tool_menu, tool_sessions
     from ..llm import generate_with_tools
 
     async def _run() -> tuple[str, list[str]] | None:
-        async with open_user_tools(user_id) as tools:
-            if not tools:
+        async with tool_sessions(user_id) as sessions:
+            decls = await tool_menu(user_id, sessions)
+            if not decls:
                 return None
-            sessions = [t.session for t in tools]
-            system_prompt = prep.system_prompt + tools_addendum([t.label for t in tools])
-            reply, called = await generate_with_tools(
-                system_prompt,
+            labels = list(dict.fromkeys(d.label for d in decls))
+
+            async def dispatch(provider: str, name: str, args: dict) -> str:
+                return await sessions.call_tool(provider, name, args)
+
+            return await generate_with_tools(
+                prep.system_prompt + tools_addendum(labels),
                 _format_history(prep.history, prep.text),
-                sessions=sessions,
+                declarations=[vars(d) for d in decls],
+                dispatch=dispatch,
                 attachments=[(mime, data) for mime, data, _ in attachments],
             )
-            return reply, called
 
     try:
         return asyncio.run(_run())
@@ -201,15 +207,112 @@ def _mcp_reply(
         return None
 
 
+def _mcp_stream(
+    prep: PreparedTurn,
+    *,
+    user_id: str,
+    attachments: list[tuple[str, bytes, str]],
+) -> Iterator[dict]:
+    """Drive the async tool-aware *streaming* generation from this sync SSE generator.
+
+    Yields the same event dicts as llm.generate_with_tools_stream
+    ({"type":"delta"|"tool_used", ...}). Opens a turn-scoped MCP session pool and hands the
+    model the cached tool menu; a tool server is contacted only if the model calls a tool.
+    Yields nothing if the user has no reachable tools (or setup fails before any output) —
+    the caller then falls back to the plain streaming path.
+
+    The whole async generation runs as a single task on a private event loop in a background
+    thread, with events handed back through a queue. This is deliberate: MCP's transport uses
+    anyio cancel scopes that must be entered and exited in the *same* task, so we can't drive
+    the generator step-by-step from this (synchronous, threadpool-run) caller — we let it run
+    start-to-finish in one task and just consume what it emits.
+    """
+    import asyncio
+    import queue
+    import threading
+
+    from ..connections.mcp_client import tool_menu, tool_sessions
+    from ..llm import generate_with_tools_stream
+
+    events: queue.Queue = queue.Queue(maxsize=256)
+    _DONE = object()
+
+    async def _drive():
+        try:
+            async with tool_sessions(user_id) as sessions:
+                decls = await tool_menu(user_id, sessions)
+                if not decls:
+                    return
+                labels = list(dict.fromkeys(d.label for d in decls))
+
+                async def dispatch(provider: str, name: str, args: dict) -> str:
+                    return await sessions.call_tool(provider, name, args)
+
+                async for ev in generate_with_tools_stream(
+                    prep.system_prompt + tools_addendum(labels),
+                    _format_history(prep.history, prep.text),
+                    declarations=[vars(d) for d in decls],
+                    dispatch=dispatch,
+                    attachments=[(mime, data) for mime, data, _ in attachments],
+                ):
+                    events.put(("ev", ev))
+        except Exception as exc:  # noqa: BLE001 — relayed to the consumer below
+            events.put(("err", exc))
+        finally:
+            events.put((_DONE, None))
+
+    def _run():
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_drive())
+        finally:
+            loop.close()
+
+    worker = threading.Thread(target=_run, name="mcp-stream", daemon=True)
+    worker.start()
+
+    err: Exception | None = None
+    while True:
+        kind, payload = events.get()
+        if kind is _DONE:
+            break
+        if kind == "err":
+            err = payload  # defer: drain until _DONE, then surface
+            continue
+        yield payload
+    worker.join()
+    # An error here means the user HAS usable tools but the tool-aware generation failed
+    # (an empty menu returns cleanly with no error). Surface it rather than letting the
+    # caller fall back to a tool-less answer that would falsely claim it can't reach their
+    # tools — an honest "something went wrong" beats a confident lie.
+    if err is not None:
+        # Map a provider rate-limit (429) to RateLimited so the route shows the accurate
+        # "wait a few seconds" message instead of a generic error.
+        from ..llm import RateLimited, _is_transient
+
+        if not isinstance(err, RateLimited) and _is_transient(err):
+            raise RateLimited(str(err)) from err
+        raise err
+
+
 def _persist_turn(prep: PreparedTurn, message: str, reply: str) -> str:
-    """Store both messages, bump the conversation timestamp; returns the user message id."""
+    """Store both messages, bump the conversation timestamp; returns the user message id.
+
+    The two inserts use clock_timestamp() (real wall-clock, which advances within a
+    transaction) rather than the column default now() (transaction-start time, identical for
+    every row in the same transaction). Otherwise the user and assistant messages get the
+    SAME created_at and `ORDER BY created_at` is a tie that Postgres breaks arbitrarily —
+    which is why a reloaded conversation sometimes showed the reply above the question.
+    """
     with get_conn() as conn:
         user_msg = conn.execute(
-            "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'user',%s) RETURNING id",
+            "INSERT INTO messages (conversation_id, role, content, created_at) "
+            "VALUES (%s,'user',%s, clock_timestamp()) RETURNING id",
             (prep.conversation_id, message + prep.attach_note),
         ).fetchone()
         conn.execute(
-            "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
+            "INSERT INTO messages (conversation_id, role, content, created_at) "
+            "VALUES (%s,'assistant',%s, clock_timestamp())",
             (prep.conversation_id, reply),
         )
         conn.execute(
@@ -308,17 +411,19 @@ def run_turn_stream(
     }
 
     reply: str | None = None
-    # If the user has connected tools, take the tool-aware path. It's not token-streamed
-    # (the model may pause to call a tool), so we surface a status event, run it to
-    # completion, then emit the finished reply as one delta.
+    # If the user has connected tools, expose the (cached) tool menu and let the model
+    # decide whether any are needed. The reply streams token-by-token like the normal path;
+    # a tool server is contacted only if the model actually calls one — so "hello" never
+    # touches the user's tools. If nothing is produced (no reachable tools), we fall through
+    # to the plain streaming path below.
     if conn_store.connected_providers(user_id):
-        yield {"type": "tool_status", "text": "Checking your connected tools…"}
-        tool_result = _mcp_reply(prep, user_id=user_id, attachments=attachments)
-        if tool_result is not None:
-            reply, used = tool_result
-            if used:
-                yield {"type": "tool_used", "names": used}
-            yield {"type": "delta", "text": reply}
+        stream_parts: list[str] = []
+        for ev in _mcp_stream(prep, user_id=user_id, attachments=attachments):
+            if ev["type"] == "delta":
+                stream_parts.append(ev["text"])
+            yield ev
+        if stream_parts:
+            reply = "".join(stream_parts).strip()
 
     if reply is None:
         parts: list[str] = []

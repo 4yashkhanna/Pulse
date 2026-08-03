@@ -190,7 +190,10 @@ def get_conversation(conversation_id: str, user: CurrentUser = Depends(require_o
         if not _owns(conn, conversation_id, user.id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
         rows = conn.execute(
-            "SELECT role, content, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at",
+            # Tie-break equal timestamps by role (user before assistant) so a turn never
+            # renders the reply above the question — see _persist_turn in chat.py.
+            "SELECT role, content, created_at FROM messages WHERE conversation_id = %s "
+            "ORDER BY created_at, (role = 'assistant')",
             (conversation_id,),
         ).fetchall()
         sk = conn.execute(

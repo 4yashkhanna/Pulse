@@ -1,20 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Guard from "@/components/Guard";
-import KnowledgePanel from "@/components/KnowledgePanel";
 import {
   KTemplate,
   Skill,
   createSector,
   createSkill,
   deleteSkill,
-  deleteTemplateDoc,
   listSkills,
-  listTemplateDocs,
   listTemplates,
   updateSkill,
-  uploadTemplateDocs,
 } from "@/lib/api";
 
 const STAGE_META: Record<string, { icon: string; desc: string }> = {
@@ -33,14 +30,13 @@ const SECTOR_ICONS: Record<string, string> = {
   government: "account_balance_wallet",
 };
 
-function TemplateCard({ tpl, open, onToggle }: { tpl: KTemplate; open: boolean; onToggle: () => void }) {
+function TemplateCard({ tpl }: { tpl: KTemplate }) {
+  const router = useRouter();
   const meta = tpl.kind === "stage" ? STAGE_META[tpl.key] : undefined;
   const icon = meta?.icon || SECTOR_ICONS[tpl.key] || "category";
   return (
     <div
-      className={`bg-surface-container-lowest rounded-xl p-stack-md border shadow-ambient flex flex-col transition-all ${
-        open ? "border-pulse-teal-vibrant" : "border-outline-variant hover:-translate-y-0.5 hover:shadow-md hover:border-pulse-teal-vibrant"
-      }`}
+      className="bg-surface-container-lowest rounded-xl p-stack-md border border-outline-variant shadow-ambient flex flex-col transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-pulse-teal-vibrant"
       style={tpl.kind === "stage" ? { minWidth: 300, width: 300, flexShrink: 0 } : undefined}
     >
       <div className="flex items-start justify-between mb-3">
@@ -55,12 +51,10 @@ function TemplateCard({ tpl, open, onToggle }: { tpl: KTemplate; open: boolean; 
       <h3 className="text-headline-sm text-primary font-semibold mb-2">{tpl.name}</h3>
       <p className="text-body-sm text-on-surface-variant flex-1">{meta?.desc || tpl.description || "Sector coaching context and premade RAG documents."}</p>
       <button
-        onClick={onToggle}
-        className={`mt-4 text-label-sm py-2 rounded transition-colors font-medium ${
-          open ? "bg-primary text-white" : "bg-surface-container text-primary hover:bg-primary/10"
-        }`}
+        onClick={() => router.push(`/admin/knowledge/${tpl.id}`)}
+        className="mt-4 text-label-sm py-2 rounded transition-colors font-medium bg-surface-container text-primary hover:bg-primary/10"
       >
-        {open ? "Close" : "Manage documents"}
+        Manage documents
       </button>
     </div>
   );
@@ -114,7 +108,6 @@ function SkillEditor({ skill, onSaved, onDeleted }: { skill: Skill; onSaved: () 
 
 function StageKnowledge() {
   const [templates, setTemplates] = useState<KTemplate[]>([]);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [showNewSkill, setShowNewSkill] = useState(false);
   const [ns, setNs] = useState({ name: "", command: "", description: "", body: "" });
@@ -124,7 +117,6 @@ function StageKnowledge() {
 
   const stages = templates.filter((t) => t.kind === "stage");
   const sectors = templates.filter((t) => t.kind === "sector");
-  const openTpl = templates.find((t) => t.id === openId) || null;
 
   async function addSector() {
     const name = prompt("Sector name (e.g. Energy & Utilities):");
@@ -153,7 +145,7 @@ function StageKnowledge() {
           <h2 className="text-headline-md text-on-surface border-l-4 border-primary pl-3 mb-6">Maturity Stage Templates</h2>
           <div className="flex gap-6 overflow-x-auto pb-4">
             {stages.map((t) => (
-              <TemplateCard key={t.id} tpl={t} open={openId === t.id} onToggle={() => setOpenId(openId === t.id ? null : t.id)} />
+              <TemplateCard key={t.id} tpl={t} />
             ))}
           </div>
         </section>
@@ -168,23 +160,10 @@ function StageKnowledge() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {sectors.map((t) => (
-              <TemplateCard key={t.id} tpl={t} open={openId === t.id} onToggle={() => setOpenId(openId === t.id ? null : t.id)} />
+              <TemplateCard key={t.id} tpl={t} />
             ))}
           </div>
         </section>
-
-        {/* Open template's document manager */}
-        {openTpl && (
-          <section className="mb-12 max-w-3xl">
-            <KnowledgePanel
-              title={`${openTpl.name} — template documents`}
-              hint="Documents here are embedded once. Applying this template to an organization copies them (instantly, no re-embedding) into that org's knowledge."
-              load={() => listTemplateDocs(openTpl.id)}
-              upload={(fs) => uploadTemplateDocs(openTpl.id, fs).then((r) => { load(); return r; })}
-              remove={(id) => deleteTemplateDoc(openTpl.id, id).then((r) => { load(); return r; })}
-            />
-          </section>
-        )}
 
         {/* Skills */}
         <section className="mb-12">

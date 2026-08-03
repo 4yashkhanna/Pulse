@@ -21,13 +21,22 @@ class RateLimited(Exception):
     """Raised when the provider rate-limits us after retries are exhausted."""
 
 
-def _is_transient(exc: Exception) -> bool:
-    """Rate limits (429) and temporary server errors (503 overloaded) — both worth a retry."""
+def _is_transient(exc: BaseException) -> bool:
+    """Rate limits (429) and temporary server errors (503 overloaded) — both worth a retry.
+
+    The async MCP/anyio stack wraps the underlying provider error in a TaskGroup
+    ExceptionGroup, whose own message says nothing about the cause — so we recurse into the
+    group (and any chained cause) to find the real 429/503 underneath."""
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_transient(sub) for sub in exc.exceptions)
     s = str(exc).lower()
-    return any(
+    if any(
         tok in s
         for tok in ("429", "resource_exhausted", "exhausted", "503", "unavailable", "overloaded", "high demand")
-    )
+    ):
+        return True
+    cause = exc.__cause__ or exc.__context__
+    return _is_transient(cause) if cause is not None else False
 
 
 def _with_retry(fn: Callable[[], T], *, attempts: int = 4, base_delay: float = 2.0) -> T:
@@ -199,43 +208,41 @@ def _sanitize_schema(node: Any) -> Any:
     return out or None
 
 
-async def generate_with_tools(
+async def generate_with_tools_stream(
     system_prompt: str,
     user_content: str,
     *,
-    sessions: list[Any],
+    declarations: list[dict[str, Any]],
+    dispatch: Callable[[str, str, dict], Any],
     temperature: float = 0.6,
     attachments: list[tuple[str, bytes]] | None = None,
-) -> tuple[str, list[str]]:
-    """Tool-augmented generation: the model may call MCP tools mid-turn.
+):
+    """Streaming, tool-aware generation with lazily-connected tools.
 
-    `sessions` is a list of live MCP ClientSessions (one per connected provider). We list
-    each session's tools, expose them to Gemini as function declarations (with sanitized
-    schemas), and run the call loop ourselves — dispatching each function call to the
-    owning session and feeding the result back until the model produces a final answer.
+    `declarations` is the cached tool menu — a list of {provider, name, description, params}
+    dicts (see connections.mcp_client.tool_menu); no live MCP session is needed to *describe*
+    the tools. `dispatch(provider, name, args)` is an async callable that *executes* a tool
+    call, opening that provider's MCP session only when it's actually invoked.
 
-    Returns (reply_text, tool_names_called) so the chat layer can surface which tools ran.
+    Yields event dicts:
+        {"type": "delta", "text": ...}        — reply tokens as they arrive
+        {"type": "tool_used", "names": [...]} — when the model calls tools
+
+    The model decides whether any tool is needed; a message that needs none (e.g. "hello")
+    streams straight through and never triggers dispatch, so no tool server is contacted.
     """
     settings = get_settings()
     if settings.llm_provider != "gemini":
         raise NotImplementedError(f"Tool use for provider '{settings.llm_provider}' not wired yet.")
     from google.genai import types
 
-    # Discover tools across all sessions; map each tool name to its owning session.
-    declarations: list[Any] = []
-    owner: dict[str, Any] = {}
-    for session in sessions:
-        listed = await session.list_tools()
-        for tool in listed.tools:
-            params = _sanitize_schema(tool.inputSchema) or {"type": "object", "properties": {}}
-            declarations.append(
-                types.FunctionDeclaration(
-                    name=tool.name,
-                    description=(tool.description or "")[:1024],
-                    parameters=params,
-                )
-            )
-            owner[tool.name] = session
+    owner = {d["name"]: d["provider"] for d in declarations}
+    fdecls = [
+        types.FunctionDeclaration(
+            name=d["name"], description=d["description"], parameters=d["params"]
+        )
+        for d in declarations
+    ]
 
     client = _gemini_client()
     parts: list = [types.Part.from_text(text=user_content)]
@@ -253,7 +260,7 @@ async def generate_with_tools(
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         temperature=temperature,
-        tools=[types.Tool(function_declarations=declarations)] if declarations else None,
+        tools=[types.Tool(function_declarations=fdecls)] if fdecls else None,
         # We drive the loop; don't let the SDK try to auto-execute (it can't reach MCP).
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         http_options=http_options,
@@ -261,56 +268,91 @@ async def generate_with_tools(
 
     called: list[str] = []
     for _ in range(_MAX_TOOL_TURNS):
-        resp = await client.aio.models.generate_content(
+        fn_calls: list = []
+        text_parts: list[str] = []
+        stream = await client.aio.models.generate_content_stream(
             model=settings.chat_model, contents=history, config=config
         )
-        candidate = (resp.candidates or [None])[0]
-        content = getattr(candidate, "content", None)
-        fn_calls = [
-            p.function_call
-            for p in (getattr(content, "parts", None) or [])
-            if getattr(p, "function_call", None)
-        ]
-        if not fn_calls:
-            return (resp.text or "").strip(), called
+        async for event in stream:
+            candidate = (event.candidates or [None])[0]
+            content = getattr(candidate, "content", None)
+            for p in getattr(content, "parts", None) or []:
+                if getattr(p, "function_call", None):
+                    fn_calls.append(p.function_call)
+                elif getattr(p, "text", None):
+                    text_parts.append(p.text)
+                    yield {"type": "delta", "text": p.text}
 
-        history.append(content)  # the model's tool-call turn
+        if not fn_calls:
+            return
+
+        # Record the model's tool-call turn, then dispatch each call and feed results back.
+        model_parts: list = []
+        if text_parts:
+            model_parts.append(types.Part.from_text(text="".join(text_parts)))
+        for fc in fn_calls:
+            model_parts.append(types.Part(function_call=fc))
+        history.append(types.Content(role="model", parts=model_parts))
+
+        new_names: list[str] = []
         tool_parts: list = []
         for fc in fn_calls:
             if fc.name not in called:
                 called.append(fc.name)
-            session = owner.get(fc.name)
+                new_names.append(fc.name)
             try:
-                result = await session.call_tool(fc.name, dict(fc.args or {}))
-                payload = _mcp_result_text(result)
+                payload = await dispatch(owner.get(fc.name), fc.name, dict(fc.args or {}))
             except Exception as exc:  # noqa: BLE001 — report tool failure to the model
                 payload = f"Tool error: {exc}"
             tool_parts.append(
                 types.Part.from_function_response(name=fc.name, response={"result": payload})
             )
+        if new_names:
+            yield {"type": "tool_used", "names": new_names}
         history.append(types.Content(role="user", parts=tool_parts))
 
-    # Exhausted the tool budget — make one final call without tools for a clean answer.
-    final = await client.aio.models.generate_content(
+    # Exhausted the tool budget — one final pass without tools for a clean answer.
+    final = await client.aio.models.generate_content_stream(
         model=settings.chat_model,
         contents=history,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt, temperature=temperature, http_options=http_options
         ),
     )
-    return (final.text or "").strip(), called
+    async for event in final:
+        candidate = (event.candidates or [None])[0]
+        content = getattr(candidate, "content", None)
+        for p in getattr(content, "parts", None) or []:
+            if getattr(p, "text", None):
+                yield {"type": "delta", "text": p.text}
 
 
-def _mcp_result_text(result: Any) -> str:
-    """Flatten an MCP call_tool result into text for the model."""
-    if getattr(result, "structuredContent", None):
-        return json.dumps(result.structuredContent)[:8000]
-    chunks: list[str] = []
-    for item in getattr(result, "content", None) or []:
-        text = getattr(item, "text", None)
-        if text:
-            chunks.append(text)
-    return ("\n".join(chunks) or "(no content)")[:8000]
+async def generate_with_tools(
+    system_prompt: str,
+    user_content: str,
+    *,
+    declarations: list[dict[str, Any]],
+    dispatch: Callable[[str, str, dict], Any],
+    temperature: float = 0.6,
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> tuple[str, list[str]]:
+    """Non-streaming tool-augmented generation (legacy /chat). Drains
+    generate_with_tools_stream and returns (reply_text, tool_names_called)."""
+    parts: list[str] = []
+    called: list[str] = []
+    async for ev in generate_with_tools_stream(
+        system_prompt,
+        user_content,
+        declarations=declarations,
+        dispatch=dispatch,
+        temperature=temperature,
+        attachments=attachments,
+    ):
+        if ev["type"] == "delta":
+            parts.append(ev["text"])
+        elif ev["type"] == "tool_used":
+            called.extend(ev["names"])
+    return "".join(parts).strip(), called
 
 
 def generate_json(system_prompt: str, user_content: str, schema: dict[str, Any]) -> dict[str, Any]:

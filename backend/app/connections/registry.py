@@ -5,12 +5,16 @@ OAuth client credentials in .env — no new integration code. Each provider poin
 remote MCP server; the coach talks to it through the standard MCP protocol, so we never
 hand-write REST wrappers.
 
-OAuth note: providers differ in how their MCP server authenticates.
-- Linear, Jira (Atlassian): accept a classic OAuth-app bearer token → auth_mode="classic"
-  (client id/secret from a developer app registered in .env).
-- Notion, Figma: reject classic tokens; their MCP server runs its own OAuth authorization
-  server → auth_mode="mcp" (we discover its endpoints and self-register via Dynamic Client
+Providers differ in transport and in how they authenticate:
+- Linear, Jira (Atlassian): remote MCP server that accepts a classic OAuth-app bearer token
+  → transport=MCP, auth_mode="classic" (client id/secret from a developer app in .env).
+- Notion: remote MCP server that runs its own OAuth authorization server → transport=MCP,
+  auth_mode="mcp" (we discover its endpoints and self-register via Dynamic Client
   Registration, the same flow Claude/ChatGPT use — no developer app needed).
+- Figma: its hosted MCP gates the `mcp:connect` scope to approved partners, so third-party
+  apps can't use it. We drive Figma over its public REST API instead → transport="rest"
+  (see figma_rest.py), with standard Figma OAuth (auth_mode="classic", Basic-auth token
+  exchange, granular read scopes) and a registered FIGMA_CLIENT_ID/SECRET.
 """
 from __future__ import annotations
 
@@ -90,8 +94,19 @@ PROVIDERS: dict[str, Provider] = {
         label="Figma",
         capability="Read your design files and leave comments",
         icon="brush",
-        mcp_url="https://mcp.figma.com/mcp",
-        auth_mode="mcp",  # mcp.figma.com rejects classic OAuth-app tokens
+        # Figma's hosted MCP (mcp.figma.com) gates the `mcp:connect` scope to approved
+        # partners only — third-party OAuth apps can't use it. So Figma is the one provider
+        # we drive over its public REST API instead of MCP (see connections/figma_rest.py),
+        # with standard Figma OAuth (Basic-auth token exchange) and granular read scopes.
+        mcp_url="",  # unused for REST providers
+        transport="rest",
+        authorize_url="https://www.figma.com/oauth",
+        token_url="https://api.figma.com/v1/oauth/token",
+        scopes="file_content:read file_metadata:read file_comments:read file_comments:write current_user:read projects:read",
+        token_auth="basic",  # Figma requires Base64(client_id:client_secret) in the header
+        uses_pkce=False,      # confidential client (has a secret); Figma's canonical flow omits PKCE
+        client_id_env="FIGMA_CLIENT_ID",
+        client_secret_env="FIGMA_CLIENT_SECRET",
         experimental=True,
     ),
     "linear": Provider(

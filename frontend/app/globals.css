@@ -1,0 +1,378 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Material Symbols icon style ─────────────────────────────────── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.icon-fill {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ─── Base ─────────────────────────────────────────────────────────── */
+:root {
+  --sidebar-w: 280px;
+}
+html.sidebar-collapsed {
+  --sidebar-w: 76px;
+}
+html, body {
+  @apply bg-background text-on-surface font-sans text-body-md;
+  height: 100%;
+}
+
+/* ─── App shell ─────────────────────────────────────────────────────── */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+.app-main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+  transition: margin-left 0.2s ease-in-out;
+}
+
+/* ─── Scrollbars ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c4c6d4; border-radius: 20px; }
+::-webkit-scrollbar-thumb:hover { background: #747683; }
+
+/* ─── Sidebar nav ───────────────────────────────────────────────────── */
+.sidebar {
+  @apply fixed left-0 top-0 h-screen bg-primary flex flex-col py-8 z-50;
+  width: var(--sidebar-w);
+  border-right: 1px solid rgba(255,255,255,0.08);
+  transition: width 0.2s ease-in-out;
+  overflow: hidden;
+}
+
+/* Collapse / expand toggle */
+.sidebar-toggle {
+  @apply flex items-center justify-center cursor-pointer transition-colors duration-150;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.7);
+}
+.sidebar-toggle:hover {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+}
+html.sidebar-collapsed .sidebar-toggle {
+  position: static;
+  margin: 0 auto 12px;
+}
+
+/* Collapsed state: icon rail */
+html.sidebar-collapsed .nav-label { display: none; }
+html.sidebar-collapsed .sidebar-brand {
+  @apply px-0 justify-center;
+}
+html.sidebar-collapsed .sidebar-nav-item {
+  @apply px-0 justify-center;
+}
+html.sidebar-collapsed .sidebar-nav-item.active {
+  padding-left: 0;
+}
+.sidebar-brand {
+  @apply px-6 mb-8 flex items-center gap-3;
+}
+.sidebar-brand-icon {
+  @apply w-10 h-10 rounded bg-surface-container-lowest flex items-center justify-center shrink-0;
+}
+.sidebar-nav-item {
+  @apply flex items-center gap-4 px-6 py-3 text-body-md transition-colors duration-150 cursor-pointer;
+  color: rgba(255,255,255,0.55);
+}
+.sidebar-nav-item:hover {
+  @apply bg-primary-container text-on-primary;
+}
+.sidebar-nav-item.active {
+  @apply text-pulse-teal-vibrant bg-primary-container;
+  border-left: 3px solid #00E1DE;
+  padding-left: calc(1.5rem - 3px);
+}
+.sidebar-section-label {
+  @apply px-6 mb-2 text-label-caps uppercase tracking-wider;
+  color: rgba(185,199,223,0.7);
+}
+.sidebar-thread {
+  @apply flex items-start gap-3 px-3 py-2 rounded text-body-sm cursor-pointer transition-colors duration-150;
+  color: rgba(26,28,30,0.75);
+}
+.sidebar-thread:hover {
+  background: rgba(0,0,0,0.05);
+  color: #1a1c1e;
+}
+.sidebar-thread.active {
+  background: rgba(0,51,141,0.1);
+  color: #00338d;
+  font-weight: 600;
+}
+
+/* ─── Top bar ───────────────────────────────────────────────────────── */
+.topbar {
+  @apply h-16 flex items-center justify-between px-8 bg-surface shrink-0;
+  border-bottom: 1px solid #e6e8ea;
+}
+.topbar-tabs {
+  @apply hidden md:flex items-end h-full pt-4 gap-8;
+}
+.topbar-tab {
+  @apply text-on-surface-variant font-medium pb-4 cursor-pointer transition-colors hover:text-primary text-body-sm;
+}
+.topbar-tab.active {
+  @apply text-primary font-semibold;
+  border-bottom: 2px solid #00E1DE;
+}
+
+/* ─── Page scaffold ─────────────────────────────────────────────────── */
+.page-canvas {
+  @apply flex-1 overflow-y-auto bg-background p-8;
+}
+.page-title {
+  @apply text-headline-lg text-primary;
+}
+.page-sub {
+  @apply text-body-md text-on-surface-variant mt-1 mb-8;
+}
+
+/* ─── Cards ─────────────────────────────────────────────────────────── */
+.card {
+  @apply bg-surface-container-lowest border border-surface-variant rounded-xl p-stack-md;
+  box-shadow: 0px 2px 4px rgba(0, 51, 141, 0.04);
+}
+.card-label {
+  @apply text-label-caps uppercase text-on-surface-variant mb-3;
+}
+
+/* ─── Metrics ────────────────────────────────────────────────────────── */
+.metric-big {
+  @apply text-display-lg text-primary leading-none;
+}
+.metric-delta {
+  @apply text-label-sm font-semibold ml-2;
+}
+.metric-delta.up   { @apply text-secondary; }
+.metric-delta.down { @apply text-error; }
+
+/* ─── Pillar bars ────────────────────────────────────────────────────── */
+.bar-row { @apply flex items-center gap-3 mb-3; }
+.bar-label { @apply text-body-sm font-semibold text-on-surface capitalize; width: 88px; }
+.bar-track { @apply flex-1 h-2 bg-surface-container-high rounded-full relative overflow-visible; }
+.bar-fill  { @apply h-2 rounded-full; background: #00E1DE; }
+.bar-val   { @apply text-label-sm font-semibold text-on-surface; width: 40px; text-align: right; }
+
+/* ─── Chat shell ─────────────────────────────────────────────────────── */
+.chat-shell  { @apply flex flex-col flex-1 overflow-hidden relative; }
+.chat-scroll { @apply flex-1 overflow-y-auto p-8 flex flex-col gap-8; }
+
+/* chat background grid */
+.chat-scroll::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(to right, #f2f4f6 1px, transparent 1px),
+                    linear-gradient(to bottom, #f2f4f6 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.bubble-user {
+  @apply max-w-3xl ml-auto;
+}
+.bubble-user .bubble-body {
+  @apply bg-primary text-on-primary p-4 rounded-xl rounded-tr-none text-body-md leading-relaxed;
+  box-shadow: 0px 2px 4px rgba(0,51,141,0.08);
+}
+.bubble-coach {
+  @apply max-w-3xl mr-auto;
+}
+.bubble-coach .bubble-body {
+  @apply bg-surface-container-lowest border border-surface-container-high p-5 rounded-xl rounded-tl-none text-body-md text-on-surface leading-relaxed;
+  box-shadow: 0px 2px 4px rgba(0,51,141,0.04);
+}
+.bubble-coach .bubble-body.handoff {
+  @apply bg-error-container/30 border-error/20;
+}
+.bubble-meta {
+  @apply flex items-center gap-2 mb-1;
+}
+.bubble-avatar {
+  @apply w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold;
+}
+
+/* chat input */
+.chat-input-wrap {
+  @apply p-8 pt-4 bg-gradient-to-t from-surface via-surface to-transparent relative z-20;
+}
+.chat-input-box {
+  @apply relative bg-surface-container-lowest border border-surface-container-high rounded-xl flex items-end min-h-[56px] px-2 py-2;
+  box-shadow: 0px 12px 24px rgba(0,0,0,0.04);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.chat-input-box:focus-within {
+  border-color: #00E1DE;
+  box-shadow: 0px 12px 24px rgba(0,0,0,0.04), 0 0 0 2px rgba(0,225,222,0.1);
+}
+.chat-input {
+  @apply flex-1 bg-transparent border-none focus:ring-0 resize-none py-2 px-3 text-body-md text-on-surface placeholder:text-outline;
+  max-height: 128px;
+  min-height: 40px;
+  overflow-y: hidden;
+}
+.chat-send-btn {
+  @apply w-10 h-10 rounded-lg flex items-center justify-center transition-colors shadow-sm ml-1;
+  background: #00E1DE;
+  color: #00205f;
+}
+.chat-send-btn:hover { background: #5dd9d6; }
+
+/* chips */
+.chip {
+  @apply inline-flex items-center gap-1 text-label-caps uppercase px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container;
+}
+.chip.phase { @apply bg-primary-fixed text-on-primary-fixed; }
+.chip.handoff { @apply bg-error-container text-on-error-container; }
+
+/* knowledge panel item */
+.knowledge-item {
+  @apply bg-surface border border-outline-variant/30 rounded-lg p-3 mb-2 text-body-sm;
+}
+.knowledge-item .kf { @apply font-semibold text-primary; }
+.knowledge-item .ks { @apply text-on-surface-variant text-label-sm; }
+
+/* ─── Buttons ────────────────────────────────────────────────────────── */
+.btn {
+  @apply bg-primary text-on-primary rounded-lg px-5 font-semibold text-body-sm cursor-pointer transition-colors;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn:hover { @apply bg-primary-container; }
+.btn:disabled { @apply opacity-50 cursor-default; }
+
+.btn-teal {
+  @apply rounded-lg px-5 font-semibold text-body-sm cursor-pointer transition-colors;
+  height: 40px;
+  background: #00E1DE;
+  color: #00205f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-teal:hover { background: #5dd9d6; }
+
+.btn-outline {
+  @apply border border-outline-variant text-on-surface bg-transparent rounded-lg px-5 font-semibold text-body-sm cursor-pointer transition-colors;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-outline:hover { @apply bg-surface-container; }
+
+/* ─── Ambient card shadow (Stitch admin) ────────────────────────────── */
+.shadow-ambient { box-shadow: 0px 2px 4px rgba(0, 51, 141, 0.04); }
+
+/* ─── Form elements ──────────────────────────────────────────────────── */
+.select, .input-field {
+  @apply border border-outline-variant rounded-lg px-3 py-2 text-body-sm bg-surface-container-lowest text-on-surface;
+}
+.select:focus, .input-field:focus {
+  @apply outline-none border-pulse-teal-vibrant ring-2 ring-pulse-teal-vibrant/10;
+}
+
+/* ─── Markdown inside coach bubbles ─────────────────────────────────── */
+.md { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child  { margin-bottom: 0; }
+.md p  { @apply mb-2 leading-relaxed; }
+.md ul, .md ol { @apply mb-2 ml-5; }
+.md li { @apply mb-0.5; }
+.md h1 { @apply text-headline-sm font-semibold text-primary mb-2 mt-3; }
+.md h2 { @apply text-body-lg font-semibold text-primary mb-2 mt-3; }
+.md h3 { @apply text-body-md font-semibold text-primary mb-1 mt-2; }
+.md strong { @apply font-semibold; }
+.md blockquote {
+  @apply border-l-2 border-secondary-container my-2 pl-3 text-on-surface-variant italic;
+}
+.md table { @apply w-full border-collapse text-body-sm my-2; }
+.md th, .md td { @apply border border-outline-variant/50 px-2 py-1 text-left; }
+.md th { @apply bg-surface font-semibold; }
+.md .inline-code {
+  @apply bg-primary-fixed/30 px-1 rounded text-body-sm;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.md .code-block {
+  @apply p-3 rounded-lg overflow-x-auto my-2 text-body-sm;
+  background: #0d1b2a; color: #e6edf3;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: pre;
+}
+.md .mermaid-diagram {
+  @apply bg-surface-container-lowest border border-surface-container-high rounded-lg p-4 my-2 overflow-x-auto flex justify-center;
+}
+
+/* ─── Artifact panel ─────────────────────────────────────────────────── */
+.artifact-card {
+  @apply flex items-center gap-3 w-full text-left bg-surface-container-lowest border border-outline-variant rounded-xl p-4 my-2 cursor-pointer transition-all;
+}
+.artifact-card:hover {
+  @apply border-primary-container;
+  box-shadow: 0 2px 10px rgba(0,51,141,0.08);
+}
+.artifact-panel {
+  @apply fixed top-0 right-0 bg-surface-container-lowest flex flex-col;
+  width: 54vw;
+  max-width: 820px;
+  height: 100vh;
+  border-left: 1px solid #e6e8ea;
+  box-shadow: -8px 0 30px rgba(8,14,30,0.1);
+  z-index: 50;
+}
+.artifact-head {
+  @apply flex items-center px-5 py-3 bg-surface;
+  border-bottom: 1px solid #e6e8ea;
+}
+.artifact-frame { @apply flex-1 w-full border-none bg-surface-container-lowest; }
+
+/* ─── Muted ──────────────────────────────────────────────────────────── */
+.muted { @apply text-on-surface-variant text-body-sm; }
+
+/* ─── Login page ─────────────────────────────────────────────────────── */
+.login-page {
+  @apply min-h-screen bg-background flex items-center justify-center;
+}
+.login-card {
+  @apply bg-surface-container-lowest border border-surface-variant rounded-xl p-10;
+  width: 400px;
+  box-shadow: 0 4px 24px rgba(0,51,141,0.08);
+}

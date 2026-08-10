@@ -1,0 +1,73 @@
+databases:
+  - name: pulse-db1
+    plan: free
+    postgresMajorVersion: "18"
+
+services:
+  - type: web
+    name: pulse-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PULSE_ENV
+        value: prod
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pulse-db1
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMBED_MODEL
+        value: gemini-embedding-001
+      - key: CHAT_MODEL
+        value: gemini-3.5-flash
+      - key: TAG_MODEL
+        value: gemini-3.5-flash
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CONNECTIONS_SECRET
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: BACKEND_BASE_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Pulse
+      - key: INVITE_TTL_HOURS
+        value: "168"
+      # Tool-connection OAuth apps (Linear/Jira/Figma are classic OAuth and
+      # need registered app credentials; Notion self-registers via MCP DCR).
+      # Each provider's dev console must list
+      # {BACKEND_BASE_URL}/connections/{provider}/callback as a redirect URI.
+      - key: LINEAR_CLIENT_ID
+        sync: false
+      - key: LINEAR_CLIENT_SECRET
+        sync: false
+      - key: JIRA_CLIENT_ID
+        sync: false
+      - key: JIRA_CLIENT_SECRET
+        sync: false
+      - key: FIGMA_CLIENT_ID
+        sync: false
+      - key: FIGMA_CLIENT_SECRET
+        sync: false
+
+  - type: web
+    name: pulse-frontend
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start -- -p $PORT -H 0.0.0.0
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE
+        value: https://pulse-backend-by8c.onrender.com

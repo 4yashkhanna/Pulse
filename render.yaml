@@ -1,7 +1,7 @@
 databases:
-  - name: pulse-db
+  - name: pulse-db1
     plan: free
-    postgresMajorVersion: "16"
+    postgresMajorVersion: "18"
 
 services:
   - type: web
@@ -16,7 +16,7 @@ services:
         value: prod
       - key: DATABASE_URL
         fromDatabase:
-          name: pulse-db
+          name: pulse-db1
           property: connectionString
       - key: LLM_PROVIDER
         value: gemini
